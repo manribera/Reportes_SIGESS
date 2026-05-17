@@ -1,5 +1,11 @@
 import streamlit as st
 import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+
+# =========================
+# CONFIGURACIÓN
+# =========================
 
 st.set_page_config(
     page_title="SIGESS 2026",
@@ -9,35 +15,54 @@ st.set_page_config(
 st.title("SIGESS 2026")
 st.subheader("Sistema Integral de Gestión Estratégica")
 
-st.markdown("---")
-
 # =========================
-# CARGA TEMPORAL DE DATOS
-# =========================
-# Primero lo hacemos con CSV o Excel exportado.
-# Después lo conectamos directo a Google Sheets.
-
-@st.cache_data
-def cargar_datos():
-    mesas = pd.read_csv("MESAS_FINAL.csv")
-    oe = pd.read_csv("OE_FINAL.csv")
-    pao = pd.read_csv("PAO_FINAL.csv")
-    return mesas, oe, pao
-
-
-try:
-    mesas, oe, pao = cargar_datos()
-except Exception as e:
-    st.error("No se pudieron cargar los archivos de datos.")
-    st.info("Por ahora colocá en la misma carpeta estos archivos: MESAS_FINAL.csv, OE_FINAL.csv y PAO_FINAL.csv")
-    st.stop()
-
-
-# =========================
-# NORMALIZAR COLUMNAS
+# GOOGLE SHEETS
 # =========================
 
-columnas_necesarias = [
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/drive.readonly"
+]
+
+@st.cache_data(ttl=300)
+def cargar_hoja(sheet_url, nombre_hoja):
+
+    creds_dict = st.secrets["gcp_service_account"]
+
+    creds = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=SCOPES
+    )
+
+    client = gspread.authorize(creds)
+
+    spreadsheet = client.open_by_url(sheet_url)
+
+    worksheet = spreadsheet.worksheet(nombre_hoja)
+
+    data = worksheet.get_all_records()
+
+    return pd.DataFrame(data)
+
+# =========================
+# URL LIBRO MAESTRO
+# =========================
+
+URL_MASTER = "PEGÁ_AQUÍ_EL_LINK_DEL_LIBRO_MAESTRO"
+
+# =========================
+# CARGAR HOJAS
+# =========================
+
+mesas = cargar_hoja(URL_MASTER, "MESAS_FINAL")
+oe = cargar_hoja(URL_MASTER, "OE_FINAL")
+pao = cargar_hoja(URL_MASTER, "PAO_FINAL")
+
+# =========================
+# VALIDAR COLUMNAS
+# =========================
+
+columnas = [
     "Delegación Regional",
     "Delegación Policial",
     "Trimestre"
@@ -48,65 +73,65 @@ for nombre, df in {
     "OE": oe,
     "PAO": pao
 }.items():
-    faltantes = [col for col in columnas_necesarias if col not in df.columns]
+
+    faltantes = [c for c in columnas if c not in df.columns]
+
     if faltantes:
-        st.error(f"En {nombre} faltan estas columnas: {faltantes}")
+        st.error(f"{nombre} no tiene columnas: {faltantes}")
         st.stop()
 
-
 # =========================
-# FILTROS GLOBALES
+# FILTROS
 # =========================
 
-st.markdown("### Filtros de consulta")
+st.markdown("---")
+st.header("Filtros")
 
 col1, col2, col3 = st.columns(3)
 
-regiones = sorted(mesas["Delegación Regional"].dropna().unique())
-
 with col1:
-    region = st.selectbox("Delegación Regional", regiones)
-
-delegaciones = sorted(
-    mesas[mesas["Delegación Regional"] == region]["Delegación Policial"]
-    .dropna()
-    .unique()
-)
+    region = st.selectbox(
+        "Delegación Regional",
+        sorted(mesas["Delegación Regional"].dropna().unique())
+    )
 
 with col2:
-    delegacion = st.selectbox("Delegación Policial", delegaciones)
+    delegacion = st.selectbox(
+        "Delegación Policial",
+        sorted(
+            mesas[
+                mesas["Delegación Regional"] == region
+            ]["Delegación Policial"].dropna().unique()
+        )
+    )
 
 with col3:
     trimestre = st.selectbox(
         "Trimestre",
-        ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"]
+        sorted(mesas["Trimestre"].dropna().unique())
     )
 
-
 # =========================
-# APLICAR FILTROS
+# FILTRAR
 # =========================
 
 def filtrar(df):
+
     return df[
         (df["Delegación Regional"] == region) &
         (df["Delegación Policial"] == delegacion) &
         (df["Trimestre"] == trimestre)
     ]
 
-
 mesas_f = filtrar(mesas)
 oe_f = filtrar(oe)
 pao_f = filtrar(pao)
 
+# =========================
+# DASHBOARD
+# =========================
 
 st.markdown("---")
-
-# =========================
-# RESUMEN EJECUTIVO
-# =========================
-
-st.header("Resumen Ejecutivo")
 
 c1, c2, c3 = st.columns(3)
 
@@ -119,13 +144,12 @@ with c2:
 with c3:
     st.metric("Registros PAO", len(pao_f))
 
-
 # =========================
-# SECCIONES
+# TABLAS
 # =========================
 
 st.markdown("---")
-st.header("Mesas de Articulación Local")
+st.header("Mesas de Articulación")
 st.dataframe(mesas_f, use_container_width=True)
 
 st.markdown("---")
@@ -133,5 +157,5 @@ st.header("Órdenes de Ejecución")
 st.dataframe(oe_f, use_container_width=True)
 
 st.markdown("---")
-st.header("Plan Anual Operativo / Despliegue")
+st.header("PAO")
 st.dataframe(pao_f, use_container_width=True)
