@@ -38,7 +38,7 @@ section[data-testid="stSidebar"] {
 .block-container {
     padding-top: 1.5rem;
 }
-h1, h2, h3 {
+h1, h2, h3, h4 {
     color: #F9FAFB;
 }
 [data-testid="stMetric"] {
@@ -200,16 +200,13 @@ def grafico_barras(df, x, y, titulo=""):
     fig.update_traces(marker_color='#3B82F6', textposition='outside')
     return fig
 
-# NUEVO GRÁFICO: LÍNEA DE TIEMPO EVOLUTIVA POR TRIMESTRE
+
 def grafico_linea_tiempo(df_historico, metrica_col, titulo):
-    # Ordenar cronológicamente usando mapeo ascendente pericial
     orden_trimestres = {"i trimestre": 1, "ii trimestre": 2, "iii trimestre": 3, "iv trimestre": 4}
     
     df_plot = df_historico.copy()
     df_plot["orden"] = df_plot["Trimestre"].apply(normalizar_texto).map(orden_trimestres)
     df_plot = df_plot.dropna(subset=["orden"]).sort_values("orden")
-    
-    # Extraer y limpiar valores numéricos
     df_plot["Valor"] = df_plot[metrica_col].apply(convertir_porcentaje)
     
     fig = px.line(df_plot, x="Trimestre", y="Valor", text="Valor", title=titulo, markers=True)
@@ -218,7 +215,7 @@ def grafico_linea_tiempo(df_historico, metrica_col, titulo):
         font_color="white", margin=dict(l=30, r=30, t=40, b=30),
         yaxis=dict(range=[0, 110])
     )
-    fig.update_traces(line_color="#22C55E", width=4, marker=dict(size=10), textposition="top center")
+    fig.update_traces(line_color="#22C55E", width=4, marker=dict(size=10), texttemplate='%{text:.1f}%', textposition="top center")
     return fig
 
 
@@ -241,17 +238,15 @@ except Exception as e:
 # MENÚ LATERAL DE FILTROS (SIDEBAR)
 # =====================================================
 
-# AGREGAR IMAGEN INSTITUCIONAL EN EL SIDEBAR (REQUERIDO)
-# Reemplaza con la ruta de tu archivo local o un link web de imagen válido
 try:
-    st.sidebar.image("RUTA_O_LINK_DE_TU_IMAGEN.png", use_container_width=True)
+    # Cambia esto por el nombre de tu archivo local (ej: "logo.png") o una URL directa
+    st.sidebar.image("logo_sigess.png", use_container_width=True)
 except Exception:
     st.sidebar.caption("🖼️ [SIGESS 2026 — Logotipo Operativo]")
 
 st.sidebar.title("SIGESS 2026")
 st.sidebar.caption("Centro de Monitoreo Estratégico")
 
-# AGREGADO: NUEVA PÁGINA COMPARATIVA DE TRIMESTRES EN EL SIDEBAR
 pagina = st.sidebar.radio(
     "Navegación Módulos",
     [
@@ -259,7 +254,7 @@ pagina = st.sidebar.radio(
         "PAO Estratégico",
         "Órdenes de Ejecución",
         "Mesas de Articulación",
-        "Comparativa de Trimestres", # Botón / Módulo Nuevo
+        "Comparativa de Trimestres",
         "Consolidado Regional"
     ]
 )
@@ -281,7 +276,7 @@ trimestre = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Fuente: Sembremos Seguridad")
+st.sidebar.caption("Fuerza Pública de Costa Rica")
 
 
 # =====================================================
@@ -296,16 +291,17 @@ mesas_region = filtrar_region(mesas, region, trimestre)
 oe_region = filtrar_region(oe, region, trimestre)
 pao_region = filtrar_region(pao, region, trimestre)
 
-# Data histórica total de la unidad seleccionada (Para Línea de Tiempo)
+# Datos históricos longitudinales de la unidad seleccionada
 mesas_historico = mesas[mesas["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)]
 oe_historico = oe[oe["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)]
+
 
 # =====================================================
 # ENCABEZADO DE PANTALLA
 # =====================================================
 
 st.markdown('<div class="big-title">SIGESS 2026 — CONTROL DE MANDO</div>', unsafe_allow_html=True)
-st.caption(f"Región: {region} | Unidad Cantonal: {delegacion} | Corte: {trimestre}")
+st.caption(f"Región: {region} | Unidad Cantonal: {delegacion} | Corte Seleccionado: {trimestre}")
 st.markdown("---")
 
 
@@ -353,17 +349,15 @@ if pagina == "Inicio Ejecutivo":
 
     st.markdown("---")
     
-    # AGREGADO: NUEVA SECCIÓN DE LÍNEA DE TEMPO EN PANTALLA PRINCIPAL
-    st.subheader("Evolución Cronológica del Año")
+    st.subheader("Evolución Cronológica del Año (Líneas de Tiempo)")
     col_t1, col_t2 = st.columns(2)
     with col_t1:
         if not mesas_historico.empty:
-            st.plotly_chart(grafico_linea_tiempo(mesas_historico, "% Cumplimiento Integral", "Línea de Tiempo: Notas M.A.L."), use_container_width=True)
+            st.plotly_chart(grafico_linea_tiempo(mesas_historico, "% Cumplimiento Integral", "Tendencia del % Cumplimiento Integral MAL"), use_container_width=True)
     with col_t2:
         if not oe_historico.empty:
-            # Revisa si la columna '% cumplimiento' existe en la sábana
             col_pct = "% cumplimiento" if "% cumplimiento" in oe_historico.columns else "Total OE"
-            st.plotly_chart(grafico_linea_tiempo(oe_historico, col_pct, "Línea de Tiempo: Tendencia Órdenes de Ejecución"), use_container_width=True)
+            st.plotly_chart(grafico_linea_tiempo(oe_historico, col_pct, "Tendencia del Rendimiento Órdenes de Ejecución"), use_container_width=True)
 
 
 # =====================================================
@@ -425,9 +419,9 @@ elif pagina == "Órdenes de Ejecución":
         sin_mal = numero(fila.get("OE sin planificación en MAL", 0))
         pct_oe = convertir_porcentaje(fila.get("% cumplimiento", 0))
 
-        # AGREGADO: RECOLECCIÓN PERICIAL DEL AUDITOR DE LAS OE
-        validador_oe = fila.get("Validador de la OE", "No especificado")
-        validacion_final = fila.get("Validación Final", fila.get("Validación Final ", "Pendiente"))
+        # INTEGRACIÓN: AUDITOR DE LAS ÓRDENES DE EJECUCIÓN
+        validador_oe = fila.get("Validador de la OE", "No especificado / Pendiente")
+        validacion_final = fila.get("Validación Final", fila.get("Validación Final ", "Pendiente de Dictamen"))
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Volumen Total OE", int(total_oe))
@@ -437,20 +431,20 @@ elif pagina == "Órdenes de Ejecución":
 
         st.markdown("---")
         
-        # CARD DE AUDITORÍA (NUEVO REQUISITO)
+        # CARD DE IDENTIFICACIÓN DEL VALIDADOR
         st.markdown(f"""
         <div class="card info-card">
-            <h4>Ficha de Registro y Fiscalización</h4>
-            <p><b>Funcionario Responsable / Validador:</b> {validador_oe}</p>
-            <p><b>Dictamen de Evidencias:</b> {validacion_final}</p>
+            <h4>Ficha de Registro, Fiscalización y Control</h4>
+            <p><b>Funcionario Técnico Evaluador:</b> {validador_oe}</p>
+            <p><b>Dictamen de Evidencias de Campo:</b> {validacion_final}</p>
         </div>
         """, unsafe_allow_html=True)
 
-        informe = fila.get("Informe automático (justificación técnica operativa)", "Sin informe.")
-        sintesis = fila.get("Acciones y Resultados (síntesis de acciones) ", fila.get("Acciones y Resultados (síntesis de acciones)", "Sin síntesis."))
+        informe = fila.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.")
+        sintesis = fila.get("Acciones y Resultados (síntesis de acciones) ", fila.get("Acciones y Resultados (síntesis de acciones)", "Sin síntesis de acciones."))
         
-        st.markdown(f'<div class="card success-card"><h3>Justificación Operativa</h3><p>{informe}</p></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card warning-card"><h3>Acciones de Campo</h3><p>{sintesis}</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="card success-card"><h3>Justificación Operativa Automatizada</h3><p>{informe}</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="card warning-card"><h3>Acciones de Campo Colectivas</h3><p>{sintesis}</p></div>', unsafe_allow_html=True)
 
 
 # =====================================================
@@ -470,8 +464,8 @@ elif pagina == "Mesas de Articulación":
         fase = fila.get("Fase de Madurez Operativa", "Sin registro")
         estado_gestion = fila.get("Estado de Gestión", "Sin estado")
 
-        # AGREGADO: RECOLECCIÓN PERICIAL DEL AUDITOR DE LA MESA
-        validador_mesa = fila.get("Validador de la Mesa", "No asignado")
+        # INTEGRACIÓN: AUDITOR ANALISTA DE LA MESA DE ARTICULACIÓN
+        validador_mesa = fila.get("Validador de la Mesa", "Funcionario No Asignado")
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Nota del Periodo", f"{cumplimiento:.1f}%")
@@ -481,66 +475,61 @@ elif pagina == "Mesas de Articulación":
 
         st.markdown("---")
         
-        # CARD DE AUDITORÍA MESA (NUEVO REQUISITO)
+        # CARD DE IDENTIFICACIÓN DEL VALIDADOR DE LA MESA
         st.markdown(f"""
         <div class="card info-card">
-            <h4>Estatus de Integridad y Verificación</h4>
-            <p><b>Auditor Analista SIGESS:</b> {validador_mesa}</p>
-            <p><b>Fase Territorial:</b> {fase}</p>
+            <h4>Estatus de Integridad de la Mesa</h4>
+            <p><b>Auditor de Control de Gestión SIGESS:</b> {validador_mesa}</p>
+            <p><b>Fase Territorial Registrada:</b> {fase}</p>
         </div>
         """, unsafe_allow_html=True)
 
-        justificacion = fila.get("Justificación Técnica Operativa", "Sin registro.")
+        justificacion = fila.get("Justificación Técnica Operativa", "Sin registro pericial.")
         st.markdown(f'<div class="card success-card"><h3>Justificación Técnica Operativa</h3><p>{justificacion}</p></div>', unsafe_allow_html=True)
 
 
 # =====================================================
-# PANTALLA NUEVA: COMPARATIVA DE TRIMESTRES (BENCHMARKING)
+# MÓDULO 5: COMPARATIVA DE TRIMESTRES (NUEVA PÁGINA)
 # =====================================================
 
 elif pagina == "Comparativa de Trimestres":
-    st.header("Módulo de Comparación Multi-Periodo")
-    st.caption(f"Análisis evolutivo side-by-side para: {delegacion}")
+    st.header("Módulo de Comparación Multi-Periodo (Benchmarking Side-by-Side)")
+    st.caption(f"Análisis evolutivo directo para la unidad: {delegacion}")
     st.markdown("---")
 
-    # Selectores exclusivos dentro de la página para elegir qué periodos contrastar
     col_sel1, col_sel2 = st.columns(2)
     with col_sel1:
         t_izq = st.selectbox("Seleccione Periodo Base (Izquierda)", ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"], index=0)
     with col_sel2:
         t_der = st.selectbox("Seleccione Periodo Comparativo (Derecha)", ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"], index=1)
 
-    # Filtrar datos de ambos periodos elegidos
     df_izq = filtrar(mesas, delegacion, t_izq)
     df_der = filtrar(mesas, delegacion, t_der)
 
     if df_izq.empty and df_der.empty:
         st.warning("No existen registros cargados para ninguno de los dos trimestres seleccionados.")
     else:
-        # Extraer notas o rellenar con 0 si están vacías
         nota_izq = convertir_porcentaje(df_izq["% Cumplimiento Integral"].iloc[0]) if not df_izq.empty else 0.0
         nota_der = convertir_porcentaje(df_der["% Cumplimiento Integral"].iloc[0]) if not df_der.empty else 0.0
 
-        # Mostrar indicadores lado a lado
         c_i, c_d = st.columns(2)
         with c_i:
             st.plotly_chart(grafico_gauge(nota_izq, f"Nota en {t_izq}"), use_container_width=True)
             if not df_izq.empty:
-                st.markdown(f"""<div class="card info-card"><h5>Detalle {t_izq}</h5>
-                <p><b>Estado:</b> {df_izq['Estado de Gestión'].iloc[0]}<br>
+                st.markdown(f"""<div class="card info-card"><h5>Detalle Técnico {t_izq}</h5>
+                <p><b>Estado de Gestión:</b> {df_izq['Estado de Gestión'].iloc[0]}<br>
                 <b>Gobernanza:</b> {df_izq['Índice Gobernanza Local'].iloc[0]}<br>
-                <b>Auditor:</b> {df_izq['Validador de la Mesa'].iloc[0]}</p></div>""", unsafe_allow_html=True)
+                <b>Validador:</b> {df_izq['Validador de la Mesa'].iloc[0]}</p></div>""", unsafe_allow_html=True)
         with c_d:
             st.plotly_chart(grafico_gauge(nota_der, f"Nota en {t_der}"), use_container_width=True)
             if not df_der.empty:
-                st.markdown(f"""<div class="card success-card"><h5>Detalle {t_der}</h5>
-                <p><b>Estado:</b> {df_der['Estado de Gestión'].iloc[0]}<br>
+                st.markdown(f"""<div class="card success-card"><h5>Detalle Técnico {t_der}</h5>
+                <p><b>Estado de Gestión:</b> {df_der['Estado de Gestión'].iloc[0]}<br>
                 <b>Gobernanza:</b> {df_der['Índice Gobernanza Local'].iloc[0]}<br>
-                <b>Auditor:</b> {df_der['Validador de la Mesa'].iloc[0]}</p></div>""", unsafe_allow_html=True)
+                <b>Validador:</b> {df_der['Validador de la Mesa'].iloc[0]}</p></div>""", unsafe_allow_html=True)
 
-        # Gráfico de barras comparativo directo de la variación
         st.markdown("---")
-        st.subheader("Delta de Variación")
+        st.subheader("Delta Real de Variación")
         df_delta = pd.DataFrame({
             "Periodo Evaluado": [t_izq, t_der],
             "Porcentaje de Cumplimiento %": [nota_izq, nota_der]
@@ -549,7 +538,7 @@ elif pagina == "Comparativa de Trimestres":
 
 
 # =====================================================
-# MÓDULO 5: CONSOLIDADO REGIONAL
+# MÓDULO 6: CONSOLIDADO REGIONAL
 # =====================================================
 
 elif pagina == "Consolidado Regional":
