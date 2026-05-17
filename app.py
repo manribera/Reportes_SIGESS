@@ -98,17 +98,20 @@ def cargar_hoja(sheet_url, nombre_hoja):
     return pd.DataFrame(data)
 
 
+def normalizar_texto(texto):
+    return (str(texto).lower().strip()
+            .replace('á', 'a')
+            .replace('é', 'e')
+            .replace('í', 'i')
+            .replace('ó', 'o')
+            .replace('ú', 'u')
+            .replace(r'[\r\n]+', ''))
+
+
 def limpiar_df(df):
     df = df.copy()
+    # Limpia únicamente los nombres de los encabezados para preservar los tipos de datos numéricos intactos
     df.columns = df.columns.astype(str).str.strip()
-
-    for col in ["Delegación Regional", "Delegación Policial", "Trimestre"]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.replace(r'[\r\n]+', '', regex=True).str.strip()
-            
-    if "Trimestre" in df.columns:
-        df["Trimestre"] = df["Trimestre"].str.replace(r'\s+', ' ', regex=True).str.strip()
-
     return df
 
 
@@ -128,18 +131,11 @@ def convertir_porcentaje(valor):
     return valor
 
 
-def normalizar_texto(texto):
-    return (str(texto).lower().strip()
-            .replace('á', 'a')
-            .replace('é', 'e')
-            .replace('í', 'i')
-            .replace('ó', 'o')
-            .replace('ú', 'u'))
-
-
 def filtrar(df, delegacion, trimestre):
     if df.empty:
         return df
+    
+    # Filtrado pericial preservando la estructura e integridad nativa de las columnas del DataFrame
     mask_delegacion = df["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)
     mask_trimestre = df["Trimestre"].apply(normalizar_texto) == normalizar_texto(trimestre)
     return df[mask_delegacion & mask_trimestre]
@@ -207,15 +203,26 @@ def grafico_linea_tiempo(df_historico, metrica_col, titulo):
     df_plot = df_historico.copy()
     df_plot["orden"] = df_plot["Trimestre"].apply(normalizar_texto).map(orden_trimestres)
     df_plot = df_plot.dropna(subset=["orden"]).sort_values("orden")
-    df_plot["Valor"] = df_plot[metrica_col].apply(convertir_porcentaje)
+    df_plot["Valor_Limpio"] = df_plot[metrica_col].apply(convertir_porcentaje)
     
-    fig = px.line(df_plot, x="Trimestre", y="Valor", text="Valor", title=titulo, markers=True)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df_plot["Trimestre"], 
+        y=df_plot["Valor_Limpio"],
+        mode='lines+markers+text',
+        text=df_plot["Valor_Limpio"].apply(lambda v: f"{v:.1f}%"),
+        textposition="top center",
+        line=dict(color="#22C55E", width=4),
+        marker=dict(size=10, color="#22C55E")
+    ))
+    
     fig.update_layout(
+        title=titulo,
         paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font_color="white", margin=dict(l=30, r=30, t=40, b=30),
-        yaxis=dict(range=[0, 110])
+        font_color="white", margin=dict(l=30, r=30, t=50, b=30),
+        yaxis=dict(range=[0, 110], gridcolor="#374151"),
+        xaxis=dict(gridcolor="#374151")
     )
-    fig.update_traces(line_color="#22C55E", width=4, marker=dict(size=10), texttemplate='%{text:.1f}%', textposition="top center")
     return fig
 
 
@@ -238,8 +245,8 @@ except Exception as e:
 # MENÚ LATERAL DE FILTROS (SIDEBAR)
 # =====================================================
 
+# CORREGIDO: ENLACE AUTOMÁTICO DIRECTO A TU IMAGEN LOCAL
 try:
-    # Cambia esto por el nombre de tu archivo local (ej: "logo.png") o una URL directa
     st.sidebar.image("logo_sigess.png", use_container_width=True)
 except Exception:
     st.sidebar.caption("🖼️ [SIGESS 2026 — Logotipo Operativo]")
@@ -291,7 +298,7 @@ mesas_region = filtrar_region(mesas, region, trimestre)
 oe_region = filtrar_region(oe, region, trimestre)
 pao_region = filtrar_region(pao, region, trimestre)
 
-# Datos históricos longitudinales de la unidad seleccionada
+# Datos históricos longitudinales completos de la unidad seleccionada
 mesas_historico = mesas[mesas["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)]
 oe_historico = oe[oe["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)]
 
@@ -324,7 +331,6 @@ if pagina == "Inicio Ejecutivo":
     if not mesas_f.empty and "% Cumplimiento Integral" in mesas_f.columns:
         cumplimiento_mal = convertir_porcentaje(mesas_f["% Cumplimiento Integral"].iloc[0])
 
-    # Cálculo Ponderado Real Anual Absoluto (Cerrado a 4 periodos obligatorios)
     nota_anual_absoluta = mesas_historico["% Cumplimiento Integral"].apply(numero).sum() / 4.0
     nota_anual_absoluta = convertir_porcentaje(nota_anual_absoluta)
 
@@ -349,6 +355,7 @@ if pagina == "Inicio Ejecutivo":
 
     st.markdown("---")
     
+    # RESTAURADO Y CORREGIDO: SECCIÓN DE EVOLUCIÓN TEMPORAL LONGITUDINAL
     st.subheader("Evolución Cronológica del Año (Líneas de Tiempo)")
     col_t1, col_t2 = st.columns(2)
     with col_t1:
@@ -419,7 +426,6 @@ elif pagina == "Órdenes de Ejecución":
         sin_mal = numero(fila.get("OE sin planificación en MAL", 0))
         pct_oe = convertir_porcentaje(fila.get("% cumplimiento", 0))
 
-        # INTEGRACIÓN: AUDITOR DE LAS ÓRDENES DE EJECUCIÓN
         validador_oe = fila.get("Validador de la OE", "No especificado / Pendiente")
         validacion_final = fila.get("Validación Final", fila.get("Validación Final ", "Pendiente de Dictamen"))
 
@@ -431,7 +437,6 @@ elif pagina == "Órdenes de Ejecución":
 
         st.markdown("---")
         
-        # CARD DE IDENTIFICACIÓN DEL VALIDADOR
         st.markdown(f"""
         <div class="card info-card">
             <h4>Ficha de Registro, Fiscalización y Control</h4>
@@ -464,7 +469,6 @@ elif pagina == "Mesas de Articulación":
         fase = fila.get("Fase de Madurez Operativa", "Sin registro")
         estado_gestion = fila.get("Estado de Gestión", "Sin estado")
 
-        # INTEGRACIÓN: AUDITOR ANALISTA DE LA MESA DE ARTICULACIÓN
         validador_mesa = fila.get("Validador de la Mesa", "Funcionario No Asignado")
 
         c1, c2, c3, c4 = st.columns(4)
@@ -475,7 +479,6 @@ elif pagina == "Mesas de Articulación":
 
         st.markdown("---")
         
-        # CARD DE IDENTIFICACIÓN DEL VALIDADOR DE LA MESA
         st.markdown(f"""
         <div class="card info-card">
             <h4>Estatus de Integridad de la Mesa</h4>
@@ -489,7 +492,7 @@ elif pagina == "Mesas de Articulación":
 
 
 # =====================================================
-# MÓDULO 5: COMPARATIVA DE TRIMESTRES (NUEVA PÁGINA)
+# MÓDULO 5: COMPARATIVA DE TRIMESTRES
 # =====================================================
 
 elif pagina == "Comparativa de Trimestres":
