@@ -1,8 +1,3 @@
-streamlit
 pandas
 gspread
-google-auth
-openpyxl
-plotly
-reportlab
 fpdf2
