@@ -48,7 +48,7 @@ def cargar_hoja(sheet_url, nombre_hoja):
 # URL LIBRO MAESTRO
 # =========================
 
-URL_MASTER = "PEGÁ_AQUÍ_EL_LINK_DEL_LIBRO_MAESTRO"
+URL_MASTER = "https://docs.google.com/spreadsheets/d/1cl2OeKSqtt4YvOkVM90uHa6Xa4zGuknjUsYpsrXzL_c/edit?usp=sharing"
 
 # =========================
 # CARGAR HOJAS
