@@ -1005,27 +1005,43 @@ elif pagina == "Órdenes de Ejecución":
         # Generación de informe
         st.subheader("Generación de Informe Oficial")
 
-        if st.button("Crear informe de Órdenes de Ejecución", use_container_width=True):
-            with st.spinner("Generando informe oficial..."):
-                pdf_bytes = generar_pdf_nativo(
-                    row_mesas,
-                    row_oe,
-                    row_pao,
-                    region,
-                    delegacion,
-                    trimestre
-                )
+    if "pdf_oe_generado" not in st.session_state:
+    st.session_state.pdf_oe_generado = None
 
-            st.success("Informe generado correctamente.")
+if "nombre_pdf_oe" not in st.session_state:
+    st.session_state.nombre_pdf_oe = None
 
-            st.download_button(
-                label="Descargar informe PDF",
-                data=pdf_bytes,
-                file_name=f"IF_{trimestre.replace(' ', '_')}_OE_OI_{delegacion.replace(' ', '_')}.pdf",
-                mime="application/pdf",
-                use_container_width=True
+if st.button("Crear informe de Órdenes de Ejecución", use_container_width=True):
+    try:
+        with st.spinner("Generando informe oficial..."):
+            st.session_state.pdf_oe_generado = generar_pdf_nativo(
+                row_mesas,
+                row_oe,
+                row_pao,
+                region,
+                delegacion,
+                trimestre
             )
 
+            st.session_state.nombre_pdf_oe = (
+                f"IF_{trimestre.replace(' ', '_')}_OE_OI_"
+                f"{delegacion.replace(' ', '_')}.pdf"
+            )
+
+        st.success("Informe generado correctamente. Ahora puede descargarlo.")
+
+    except Exception as e:
+        st.error("No se pudo generar el informe PDF.")
+        st.exception(e)
+
+if st.session_state.pdf_oe_generado:
+    st.download_button(
+        label="Descargar informe PDF",
+        data=st.session_state.pdf_oe_generado,
+        file_name=st.session_state.nombre_pdf_oe,
+        mime="application/pdf",
+        use_container_width=True
+    )
 
 # =====================================================
 # MÓDULO 4: MESAS DE ARTICULACIÓN
