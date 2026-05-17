@@ -88,7 +88,7 @@ div[data-testid="stMetricLabel"] {
 # FUNCIONES DE LIMPIEZA, NORMALIZACIÓN Y FILTRADO
 # =====================================================
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=30)
 def cargar_hoja(sheet_url, nombre_hoja):
     creds_dict = st.secrets["gcp_service_account"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
@@ -628,7 +628,10 @@ trimestre = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Fuerza Pública de Costa Rica")
+st.sidebar.caption("Estrategia Sembremos Seguridad")
+if st.sidebar.button("Actualizar datos", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
 
 
 # =====================================================
