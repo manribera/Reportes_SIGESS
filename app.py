@@ -4,8 +4,8 @@ import gspread
 import plotly.express as px
 import plotly.graph_objects as go
 from google.oauth2.service_account import Credentials
-import weasyprint
-import base64
+from fpdf import FPDF
+import io
 
 # =====================================================
 # CONFIGURACIÓN GENERAL DE LA APP
@@ -74,6 +74,10 @@ div[data-testid="stMetricLabel"] {
 .info-card {
     border-left: 6px solid #3B82F6;
 }
+.small-text {
+    color: #D1D5DB;
+    font-size: 14px;
+}
 .big-title {
     font-size: 30px;
     font-weight: 700;
@@ -108,6 +112,7 @@ def normalizar_texto(texto):
 
 def limpiar_df(df):
     df = df.copy()
+    # Limpia únicamente encabezados para preservar los tipos de datos numéricos intactos
     df.columns = df.columns.astype(str).str.strip()
     return df
 
@@ -145,194 +150,122 @@ def filtrar_region(df, region, trimestre):
 
 
 # =====================================================
-# MOTOR DE GENERACIÓN DE REPORTE PDF (WEASYPRINT)
+# GENERADOR NATIVO DE PDF CON LA LIBRERÍA FPDF
 # =====================================================
 
-def generar_pdf_pericial(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
-    # Extracción segura de métricas clave
+class ReporteSIGESS(FPDF):
+    def header(self):
+        try:
+            # Detecta logo_sigess.png almacenado en la raíz de tu repositorio de GitHub
+            self.image("logo_sigess.png", 160, 12, 38)
+        except Exception:
+            pass
+        self.set_font("Helvetica", "B", 13)
+        self.set_text_color(30, 58, 138)
+        self.text(15, 18, "MINISTERIO DE SEGURIDAD PÚBLICA")
+        self.set_font("Helvetica", "", 10)
+        self.set_text_color(75, 85, 99)
+        self.text(15, 23, "Estrategia Sembremos Seguridad — SIGESS 2026")
+        self.set_draw_color(30, 58, 138)
+        self.line(15, 27, 195, 27)
+        self.ln(22)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(156, 163, 175)
+        self.cell(0, 10, f"Página {self.page_no()}", 0, 0, "R")
+
+
+def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
+    pdf = ReporteSIGESS()
+    pdf.add_page()
+    pdf.set_margins(15, 15, 15)
+    
     val_pao = convertir_porcentaje(r_pao.get("AVANCE_PAO_%", 0)) if r_pao else 0.0
     val_mal = convertir_porcentaje(r_mesas.get("% Cumplimiento Integral", 0)) if r_mesas else 0.0
+    val_oe = int(numero(r_oe.get("Total OE", 0))) if r_oe else 0
+
+    # Cuadro de Metadatos del Informe
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(40, 6, "Delegación Regional:", 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(60, 6, str(region), 0, 0)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(35, 6, "Fecha Reporte:", 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(45, 6, "17/05/2026", 0, 1)
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(40, 6, "Unidad Cantonal:", 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(60, 6, str(delegacion), 0, 0)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(35, 6, "Corte Evaluado:", 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(45, 6, str(trimestre), 0, 1)
+    pdf.ln(5)
+
+    # Sección 1: Indicadores Ejecutivos
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_fill_color(243, 244, 246)
+    pdf.cell(0, 7, " 1. RESUMEN EJECUTIVO DE RENDIMIENTO", 0, 1, "L", True)
+    pdf.ln(3)
+
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_fill_color(15, 23, 42)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(60, 7, "Cumplimiento M.A.L.", 1, 0, "C", True)
+    pdf.cell(60, 7, "Eficiencia Real PAO", 1, 0, "C", True)
+    pdf.cell(60, 7, "Volumen de Órdenes (OE)", 1, 1, "C", True)
+
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(30, 58, 138)
+    pdf.cell(60, 10, f"{val_mal:.1f}%", 1, 0, "C")
+    pdf.set_text_color(22, 197, 94)
+    pdf.cell(60, 10, f"{val_pao:.1f}%", 1, 0, "C")
+    pdf.set_text_color(31, 41, 55)
+    pdf.cell(60, 10, f"{val_oe} OE", 1, 1, "C")
+    pdf.ln(5)
+
+    # Sección 2: Matriz M.A.L.
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(31, 41, 55)
+    pdf.set_fill_color(243, 244, 246)
+    pdf.cell(0, 7, " 2. EVALUACIÓN DE MESAS DE ARTICULACIÓN LOCAL (M.A.L.)", 0, 1, "L", True)
+    pdf.ln(2)
     
-    just_mal = r_mesas.get("Justificación Técnica Operativa", "Sin registro de justificación técnica.") if r_mesas else "N/A"
-    informe_oe = r_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.") if r_oe else "N/A"
-    sintesis_oe = r_oe.get("Acciones y Resultados (síntesis de acciones) ", r_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin acciones registradas.")) if r_oe else "N/A"
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.cell(0, 5, "Dictamen de Trazabilidad, Madurez y Gobernanza:", 0, 1)
+    pdf.set_font("Helvetica", "", 9.5)
+    just_mal = r_mesas.get("Justificación Técnica Operativa", "Sin registro de justificación técnica.") if r_mesas else "Sin datos."
+    pdf.multi_cell(0, 5, just_mal.encode('latin-1', 'ignore').decode('latin-1'), 1)
+    pdf.ln(5)
+
+    # Sección 3: Matriz OE
+    pdf.set_fill_color(243, 244, 246)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, " 3. FISCALIZACIÓN OPERATIVA DE ÓRDENES DE EJECUCIÓN", 0, 1, "L", True)
+    pdf.ln(2)
+
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.cell(0, 5, "Justificación Operativa Automatizada:", 0, 1)
+    pdf.set_font("Helvetica", "", 9.5)
+    informe_oe = r_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.") if r_oe else "Sin datos."
+    pdf.multi_cell(0, 5, informe_oe.encode('latin-1', 'ignore').decode('latin-1'), 1)
+    pdf.ln(3)
+
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.cell(0, 5, "Acciones de Campo Colectivas y Resultados Sembrados:", 0, 1)
+    pdf.set_font("Helvetica", "", 9.5)
+    sintesis_oe = r_oe.get("Acciones y Resultados (síntesis de acciones) ", r_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin acciones registradas.")) if r_oe else "Sin datos."
+    pdf.multi_cell(0, 5, sintesis_oe.encode('latin-1', 'ignore').decode('latin-1'), 1)
     
-    # Conversión de la imagen del logotipo a Base64 para inyección directa en el PDF
-    try:
-        with open("logo_sigess.png", "rb") as img_file:
-            logo_b64 = base64.b64encode(img_file.read()).decode('utf-8')
-            img_html = f'<img src="data:image/png;base64,{logo_b64}" style="height: 65px;">'
-    except Exception:
-        img_html = '<div style="font-weight:bold; color:#1E3A8A;">SIGESS 2026</div>'
-
-    html_content = f"""
-    <html>
-    <head>
-        <style>
-            @page {{
-                size: A4;
-                margin: 20mm 15mm;
-                @bottom-right {{
-                    content: "Página " counter(page) " de " counter(pages);
-                    font-size: 9pt;
-                    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-                    color: #6B7280;
-                }}
-            }}
-            body {{
-                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-                color: #1F2937;
-                line-height: 1.5;
-                font-size: 10pt;
-            }}
-            .header-table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin-bottom: 25px;
-                border-bottom: 3px solid #1E3A8A;
-                padding-bottom: 10px;
-            }}
-            .title-institucion {{
-                font-size: 14pt;
-                font-weight: bold;
-                color: #1E3A8A;
-                text-transform: uppercase;
-            }}
-            .subtitle-reporte {{
-                font-size: 11pt;
-                color: #4B5563;
-                margin-top: 3px;
-            }}
-            .section-title {{
-                font-size: 12pt;
-                font-weight: bold;
-                color: #1E3A8A;
-                background-color: #F3F4F6;
-                padding: 6px 10px;
-                margin-top: 20px;
-                margin-bottom: 10px;
-                border-left: 4px solid #1E3A8A;
-            }}
-            .meta-grid {{
-                width: 100%;
-                margin-bottom: 15px;
-            }}
-            .meta-label {{
-                font-weight: bold;
-                color: #374151;
-                width: 25%;
-            }}
-            .metric-table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin-bottom: 20px;
-            }}
-            .metric-table th {{
-                background-color: #0F172A;
-                color: #FFFFFF;
-                font-weight: bold;
-                text-align: center;
-                padding: 8px;
-                font-size: 9.5pt;
-            }}
-            .metric-table td {{
-                border: 1px solid #D1D5DB;
-                padding: 10px;
-                text-align: center;
-                font-size: 11pt;
-                font-weight: bold;
-            }}
-            .card-justificacion {{
-                border: 1px solid #E5E7EB;
-                border-left: 5px solid #22C55E;
-                background-color: #F9FAFB;
-                padding: 12px;
-                margin-bottom: 15px;
-                border-radius: 4px;
-                text-align: justify;
-            }}
-            .card-oe-info {{
-                border: 1px solid #E5E7EB;
-                border-left: 5px solid #3B82F6;
-                background-color: #F9FAFB;
-                padding: 12px;
-                margin-bottom: 15px;
-                border-radius: 4px;
-                text-align: justify;
-            }}
-        </style>
-    </head>
-    <body>
-        <table class="header-table">
-            <tr>
-                <td style="width: 70%;">
-                    <div class="title-institucion">MINISTERIO DE PÚBLICA SEGURIDAD</div>
-                    <div class="subtitle-reporte">Estrategia Sembremos Seguridad — SIGESS 2026</div>
-                    <div style="font-size: 9pt; color: #6B7280; margin-top: 5px;">Informe Técnico Analítico de Gestión Policial</div>
-                </td>
-                <td style="width: 30%; text-align: right; vertical-align: middle;">
-                    {img_html}
-                </td>
-            </tr>
-        </table>
-
-        <table class="meta-grid">
-            <tr>
-                <td class="meta-label">Delegación Regional:</td>
-                <td>{region}</td>
-                <td class="meta-label">Fecha de Reporte:</td>
-                <td>17/05/2026</td>
-            </tr>
-            <tr>
-                <td class="meta-label">Unidad Cantonal:</td>
-                <td>{delegacion}</td>
-                <td class="meta-label">Corte Evaluado:</td>
-                <td>{trimestre}</td>
-            </tr>
-        </table>
-
-        <div class="section-title">1. Resumen Ejecutivo de Rendimiento Estructurado</div>
-        <table class="metric-table">
-            <thead>
-                <tr>
-                    <th style="width: 33.3%;">Cumplimiento M.A.L.</th>
-                    <th style="width: 33.3%;">Eficiencia Real PAO</th>
-                    <th style="width: 33.3%;">Volumen de Órdenes de Ejecución</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td style="color: #1E3A8A;">{val_mal:.1f}%</td>
-                    <td style="color: #16A34A;">{val_pao:.1f}%</td>
-                    <td>{int(numero(r_oe.get("Total OE", 0))) if r_oe else 0} OE</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <div class="section-title">2. Evaluación de Mesas de Articulación Local (M.A.L.)</div>
-        <div style="margin-bottom: 5px;"><b>Dictamen de Trazabilidad y Gobernanza:</b></div>
-        <div class="card-justificacion">
-            {just_mal}
-        </div>
-
-        <div class="section-title">3. Fiscalización Operativa de Órdenes de Ejecución</div>
-        <div style="margin-bottom: 5px;"><b>Justificación Operativa Automatizada:</b></div>
-        <div class="card-oe-info">
-            {informe_oe}
-        </div>
-        <div style="margin-bottom: 5px;"><b>Acciones de Campo Colectivas y Corresponsabilidad:</b></div>
-        <div class="card-oe-info" style="border-left-color: #F59E0B;">
-            {sintesis_oe}
-        </div>
-
-        <div style="margin-top: 40px; text-align: center; font-size: 8.5pt; color: #9CA3AF;">
-            Documento generado de forma automatizada por la Coordinación Nacional SIGESS 2026.<br>
-            Fuerza Pública de Costa Rica — Gestión por Resultados.
-        </div>
-    </body>
-    </html>
-    """
-    return weasyprint.HTML(string=html_content).write_pdf()
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "I", 8.5)
+    pdf.cell(0, 4, "Coordinación Nacional Sembremos Seguridad — Fuerza Pública de Costa Rica.", 0, 1, "C")
+    
+    return pdf.output()
 
 
 # =====================================================
@@ -411,7 +344,7 @@ try:
     pao = limpiar_df(cargar_hoja(URL_MASTER, "PAO_FINAL"))
     control = limpiar_df(cargar_hoja(URL_MASTER, "CONTROL_FILTROS"))
 except Exception as e:
-    st.error("Error al conectar con Google Sheets.")
+    st.error("Error al conectar con Google Sheets Maestro.")
     st.exception(e)
     st.stop()
 
@@ -456,27 +389,30 @@ trimestre = st.sidebar.selectbox(
     ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"]
 )
 
-# Extracción de filas específicas para inyección de datos y PDF
+# Cruces estructurados para alimentar pantallas y reportes PDF
 mesas_f = filtrar(mesas, delegacion, trimestre)
 oe_f = filtrar(oe, delegacion, trimestre)
 pao_f = filtrar(pao, delegacion, trimestre)
 
-row_mesas = mesas_f.iloc[0].to_dict() if not mesas_f.empty else None
-row_oe = oe_f.iloc[0].to_dict() if not oe_f.empty else None
-row_pao = pao_f.iloc[0].to_dict() if not pao_f.empty else None
+row_mesas = mesas_f.iloc[0].to_dict() if not mesas_f.empty else {}
+row_oe = oe_f.iloc[0].to_dict() if not oe_f.empty else {}
+row_pao = pao_f.iloc[0].to_dict() if not pao_f.empty else {}
 
+# BOTÓN DE DESCARGA PDF INTEGRADO OPERACIONALMENTE
 st.sidebar.markdown("---")
 st.sidebar.subheader("Exportación Oficial")
 
-# Generación dinámica del archivo PDF blindado
-pdf_data = generar_pdf_pericial(row_mesas, row_oe, row_pao, region, delegacion, trimestre)
-st.sidebar.download_button(
-    label="Descargar Informe PDF",
-    data=pdf_data,
-    file_name=f"Informe_SIGESS_{delegacion.replace(' ', '_')}_{trimestre.replace(' ', '_')}.pdf",
-    mime="application/pdf",
-    use_container_width=True
-)
+try:
+    pdf_bytes = generar_pdf_nativo(row_mesas, row_oe, row_pao, region, delegacion, trimestre)
+    st.sidebar.download_button(
+        label="Descargar Informe PDF",
+        data=bytes(pdf_bytes),
+        file_name=f"Informe_SIGESS_{delegacion.replace(' ', '_')}_{trimestre.replace(' ', '_')}.pdf",
+        mime="application/pdf",
+        use_container_width=True
+    )
+except Exception as pdf_err:
+    st.sidebar.error("Error al compilar el PDF de descarga.")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Fuerza Pública de Costa Rica")
@@ -515,11 +451,11 @@ if pagina == "Inicio Ejecutivo":
     total_pao = len(pao_f) if not pao_f.empty else 0
 
     avance_pao = 0.0
-    if row_pao and "AVANCE_PAO_%" in row_pao:
+    if "AVANCE_PAO_%" in row_pao:
         avance_pao = convertir_porcentaje(row_pao["AVANCE_PAO_%"])
 
     cumplimiento_mal = 0.0
-    if row_mesas and "% Cumplimiento Integral" in row_mesas:
+    if "% Cumplimiento Integral" in row_mesas:
         cumplimiento_mal = convertir_porcentaje(row_mesas["% Cumplimiento Integral"])
 
     nota_anual_absoluta = mesas_historico["% Cumplimiento Integral"].apply(numero).sum() / 4.0
@@ -631,7 +567,7 @@ elif pagina == "Órdenes de Ejecución":
         """, unsafe_allow_html=True)
 
         informe = row_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.")
-        sintesis = row_oe.get("Acciones y Resultados (síntesis de acciones) ", row_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin síntesis de acciones."))
+        sintesis = row_oe.get("Acciones y Results (síntesis de acciones) ", row_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin síntesis de acciones."))
         
         st.markdown(f'<div class="card success-card"><h3>Justificación Operativa Automatizada</h3><p>{informe}</p></div>', unsafe_allow_html=True)
         st.markdown(f'<div class="card warning-card"><h3>Acciones de Campo Colectivas</h3><p>{sintesis}</p></div>', unsafe_allow_html=True)
