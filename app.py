@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 import io
-import re
 
 # =====================================================
 # CONFIGURACIÓN GENERAL DE LA APP
@@ -26,7 +25,7 @@ SCOPES = [
 ]
 
 # =====================================================
-# INTERFAZ ESTÉTICA (CSS MEJORADO ANTI-BLOQUEO)
+# INTERFAZ ESTÉTICA (CSS PERSONALIZADO)
 # =====================================================
 
 st.markdown("""
@@ -37,10 +36,6 @@ st.markdown("""
 }
 section[data-testid="stSidebar"] {
     background-color: #0F172A;
-}
-/* CORRECCIÓN: Margen superior aumentado a 4.5rem para evitar que la barra de Streamlit tape el título */
-.block-container {
-    padding-top: 4.5rem;
 }
 h1, h2, h3, h4 {
     color: #F9FAFB;
@@ -151,7 +146,7 @@ def filtrar_region(df, region, trimestre):
 
 
 # =====================================================
-# GENERADOR BLINDADO DE PDF (SOLUCIÓN ANTI-COLAPSO)
+# GENERADOR NATIVO DE PDF CON REEMPLAZO SEGURO
 # =====================================================
 
 class ReporteSIGESS(FPDF):
@@ -180,16 +175,9 @@ class ReporteSIGESS(FPDF):
 def sanitizar_para_pdf(texto):
     if not texto:
         return ""
-    texto = str(texto)
-    
-    # 1. Mapeo y reemplazo de caracteres tipográficos conflictivos modernos de internet
-    texto = texto.replace('▶', '- ').replace('•', '- ').replace('–', '-').replace('—', '-')
-    texto = texto.replace('“', '"').replace('”', '"').replace('"', '"').replace('"', '"')
-    texto = texto.replace('’', "'").replace('‘', "'").replace('`', "'")
-    texto = texto.replace('°', ' No. ')
-    
-    # 2. Forzar codificación segura latin-1 ignorando o descartando cualquier byte corrupto que quede
-    return texto.encode('latin-1', 'ignore').decode('latin-1')
+    # Evita caídas sustituyendo caracteres raros o de macros por equivalentes latin-1 legibles
+    string_limpia = str(texto).encode('latin-1', 'replace').decode('latin-1')
+    return string_limpia
 
 
 def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
@@ -201,11 +189,11 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     val_mal = convertir_porcentaje(r_mesas.get("% Cumplimiento Integral", 0)) if r_mesas else 0.0
     val_oe = int(numero(r_oe.get("Total OE", 0))) if r_oe else 0
 
-    # Metadatos del encabezado
+    # Metadatos
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(40, 6, "Delegación Regional:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(60, 6, pdf.normalize_text(sanitizar_para_pdf(region)), 0, 0)
+    pdf.cell(60, 6, sanitizar_para_pdf(region), 0, 0)
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(35, 6, "Fecha Reporte:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
@@ -214,14 +202,14 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(40, 6, "Unidad Cantonal:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(60, 6, pdf.normalize_text(sanitizar_para_pdf(delegacion)), 0, 0)
+    pdf.cell(60, 6, sanitizar_para_pdf(delegacion), 0, 0)
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(35, 6, "Corte Evaluado:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(45, 6, pdf.normalize_text(sanitizar_para_pdf(trimestre)), 0, 1)
+    pdf.cell(45, 6, sanitizar_para_pdf(trimestre), 0, 1)
     pdf.ln(5)
 
-    # Bloque 1: Notas de Rendimiento
+    # Bloque 1: Notas
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_fill_color(243, 244, 246)
     pdf.cell(0, 7, " 1. RESUMEN EJECUTIVO DE RENDIMIENTO", 0, 1, "L", True)
@@ -243,7 +231,7 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.cell(60, 10, f"{val_oe} OE", 1, 1, "C")
     pdf.ln(5)
 
-    # Bloque 2: MESAS Justificación
+    # Bloque 2: MESAS
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(31, 41, 55)
     pdf.set_fill_color(243, 244, 246)
@@ -253,11 +241,11 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.cell(0, 5, "Dictamen de Trazabilidad, Madurez y Gobernanza:", 0, 1)
     pdf.set_font("Helvetica", "", 9.5)
-    just_mal = r_mesas.get("Justificación Técnica Operativa", "Sin registro de justificación técnica.") if r_mesas else "Sin datos registrados."
-    pdf.multi_cell(0, 5, pdf.normalize_text(sanitizar_para_pdf(just_mal)), 1)
+    just_mal = r_mesas.get("Justificación Técnica Operativa", "Sin registro de justificación técnica.") if r_mesas else "Sin datos."
+    pdf.multi_cell(0, 5, sanitizar_para_pdf(just_mal), 1)
     pdf.ln(5)
 
-    # Bloque 3: Órdenes de Ejecución Justificación
+    # Bloque 3: OE
     pdf.set_fill_color(243, 244, 246)
     pdf.set_font("Helvetica", "B", 11)
     pdf.cell(0, 7, " 3. FISCALIZACIÓN OPERATIVA DE ÓRDENES DE EJECUCIÓN", 0, 1, "L", True)
@@ -266,15 +254,15 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.cell(0, 5, "Justificación Operativa Automatizada:", 0, 1)
     pdf.set_font("Helvetica", "", 9.5)
-    informe_oe = r_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.") if r_oe else "Sin datos registrados."
-    pdf.multi_cell(0, 5, pdf.normalize_text(sanitizar_para_pdf(informe_oe)), 1)
+    informe_oe = r_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.") if r_oe else "Sin datos."
+    pdf.multi_cell(0, 5, sanitizar_para_pdf(informe_oe), 1)
     pdf.ln(3)
 
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.cell(0, 5, "Acciones de Campo Colectivas y Resultados Sembrados:", 0, 1)
     pdf.set_font("Helvetica", "", 9.5)
-    sintesis_oe = r_oe.get("Acciones y Resultados (síntesis de acciones) ", r_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin acciones registradas.")) if r_oe else "Sin datos registrados."
-    pdf.multi_cell(0, 5, pdf.normalize_text(sanitizar_para_pdf(sintesis_oe)), 1)
+    sintesis_oe = r_oe.get("Acciones y Resultados (síntesis de acciones) ", r_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin acciones registradas.")) if r_oe else "Sin datos."
+    pdf.multi_cell(0, 5, sanitizar_para_pdf(sintesis_oe), 1)
     
     pdf.ln(10)
     pdf.set_font("Helvetica", "I", 8.5)
@@ -427,7 +415,7 @@ try:
         use_container_width=True
     )
 except Exception as pdf_err:
-    st.sidebar.error("Error crítico de compilación en el PDF.")
+    st.sidebar.error("Error al procesar el archivo de descarga.")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Fuerza Pública de Costa Rica")
@@ -446,10 +434,11 @@ oe_historico = oe[oe["Delegación Policial"].apply(normalizar_texto) == normaliz
 
 
 # =====================================================
-# ENCABEZADO DE PANTALLA
+# ENCABEZADO DE PANTALLA (CON MARGEN ANTI-BLOQUEO)
 # =====================================================
 
-st.markdown('<div class="big-title">SIGESS 2026 — CONTROL DE MANDO</div>', unsafe_allow_html=True)
+# CORRECCIÓN: Espaciado directo mediante style inline para ganarle prioridad a la barra gris de la nube
+st.markdown('<div class="big-title" style="margin-top: 60px;">SIGESS 2026 — CONTROL DE MANDO</div>', unsafe_allow_html=True)
 st.caption(f"Región: {region} | Unidad Cantonal: {delegacion} | Corte Seleccionado: {trimestre}")
 st.markdown("---")
 
