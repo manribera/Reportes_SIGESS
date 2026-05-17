@@ -249,13 +249,24 @@ def agregar_titulo_seccion(pdf, titulo):
 def agregar_caja_texto(pdf, titulo, texto, borde=1):
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.set_text_color(31, 41, 55)
+    pdf.set_x(pdf.l_margin)
     pdf.cell(0, 5, sanitizar_para_pdf(titulo), 0, 1)
 
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(31, 41, 55)
     contenido = sanitizar_para_pdf(texto if texto else "Sin datos registrados.")
-    pdf.multi_cell(0, 5, contenido, borde)
+    agregar_multicelda_segura(pdf, contenido, 5, borde)
     pdf.ln(3)
+
+def agregar_multicelda_segura(pdf, texto, alto=5, borde=1):
+    """
+    Imprime texto en PDF evitando el error:
+    FPDFException: Not enough horizontal space to render a single character.
+    """
+    pdf.set_x(pdf.l_margin)
+    ancho = pdf.w - pdf.l_margin - pdf.r_margin
+    pdf.multi_cell(ancho, alto, sanitizar_para_pdf(texto), borde)
+    pdf.set_x(pdf.l_margin)
 
 
 def generar_alertas_oe(r_oe):
@@ -469,7 +480,7 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
 
     pdf.set_font("Helvetica", "", 9)
     for alerta in generar_alertas_oe(r_oe):
-        pdf.multi_cell(0, 5, sanitizar_para_pdf(f"- {alerta}"), 1)
+        agregar_multicelda_segura(pdf, f"- {alerta}", 5, 1)
 
     pdf.ln(6)
     pdf.set_font("Helvetica", "I", 8.5)
