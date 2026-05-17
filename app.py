@@ -178,10 +178,18 @@ class ReporteSIGESS(FPDF):
 
 
 def sanitizar_para_pdf(texto):
-    # Remueve flechas de macro, viñetas raras y caracteres no soportados por FPDF2 para evitar el error de compilación
-    texto_limpio = str(texto).replace('▶', '- ').replace('•', '- ')
-    # Forzar codificación segura latin-1 ignorando basura corrupta
-    return texto_limpio.encode('latin-1', 'ignore').decode('latin-1')
+    if not texto:
+        return ""
+    texto = str(texto)
+    
+    # 1. Mapeo y reemplazo de caracteres tipográficos conflictivos modernos de internet
+    texto = texto.replace('▶', '- ').replace('•', '- ').replace('–', '-').replace('—', '-')
+    texto = texto.replace('“', '"').replace('”', '"').replace('"', '"').replace('"', '"')
+    texto = texto.replace('’', "'").replace('‘', "'").replace('`', "'")
+    texto = texto.replace('°', ' No. ')
+    
+    # 2. Forzar codificación segura latin-1 ignorando o descartando cualquier byte corrupto que quede
+    return texto.encode('latin-1', 'ignore').decode('latin-1')
 
 
 def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
@@ -197,7 +205,7 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(40, 6, "Delegación Regional:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(60, 6, sanitizar_para_pdf(region), 0, 0)
+    pdf.cell(60, 6, pdf.normalize_text(sanitizar_para_pdf(region)), 0, 0)
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(35, 6, "Fecha Reporte:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
@@ -206,14 +214,14 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(40, 6, "Unidad Cantonal:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(60, 6, sanitizar_para_pdf(delegacion), 0, 0)
+    pdf.cell(60, 6, pdf.normalize_text(sanitizar_para_pdf(delegacion)), 0, 0)
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(35, 6, "Corte Evaluado:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(45, 6, sanitizar_para_pdf(trimestre), 0, 1)
+    pdf.cell(45, 6, pdf.normalize_text(sanitizar_para_pdf(trimestre)), 0, 1)
     pdf.ln(5)
 
-    # Bloque 1: Notas
+    # Bloque 1: Notas de Rendimiento
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_fill_color(243, 244, 246)
     pdf.cell(0, 7, " 1. RESUMEN EJECUTIVO DE RENDIMIENTO", 0, 1, "L", True)
@@ -235,7 +243,7 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.cell(60, 10, f"{val_oe} OE", 1, 1, "C")
     pdf.ln(5)
 
-    # Bloque 2: MESAS
+    # Bloque 2: MESAS Justificación
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(31, 41, 55)
     pdf.set_fill_color(243, 244, 246)
@@ -245,11 +253,11 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.cell(0, 5, "Dictamen de Trazabilidad, Madurez y Gobernanza:", 0, 1)
     pdf.set_font("Helvetica", "", 9.5)
-    just_mal = r_mesas.get("Justificación Técnica Operativa", "Sin registro de justificación técnica.") if r_mesas else "Sin datos."
-    pdf.multi_cell(0, 5, sanitizar_para_pdf(just_mal), 1)
+    just_mal = r_mesas.get("Justificación Técnica Operativa", "Sin registro de justificación técnica.") if r_mesas else "Sin datos registrados."
+    pdf.multi_cell(0, 5, pdf.normalize_text(sanitizar_para_pdf(just_mal)), 1)
     pdf.ln(5)
 
-    # Bloque 3: Órdenes de Ejecución
+    # Bloque 3: Órdenes de Ejecución Justificación
     pdf.set_fill_color(243, 244, 246)
     pdf.set_font("Helvetica", "B", 11)
     pdf.cell(0, 7, " 3. FISCALIZACIÓN OPERATIVA DE ÓRDENES DE EJECUCIÓN", 0, 1, "L", True)
@@ -258,15 +266,15 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.cell(0, 5, "Justificación Operativa Automatizada:", 0, 1)
     pdf.set_font("Helvetica", "", 9.5)
-    informe_oe = r_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.") if r_oe else "Sin datos."
-    pdf.multi_cell(0, 5, sanitizar_para_pdf(informe_oe), 1)
+    informe_oe = r_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.") if r_oe else "Sin datos registrados."
+    pdf.multi_cell(0, 5, pdf.normalize_text(sanitizar_para_pdf(informe_oe)), 1)
     pdf.ln(3)
 
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.cell(0, 5, "Acciones de Campo Colectivas y Resultados Sembrados:", 0, 1)
     pdf.set_font("Helvetica", "", 9.5)
-    sintesis_oe = r_oe.get("Acciones y Resultados (síntesis de acciones) ", r_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin acciones registradas.")) if r_oe else "Sin datos."
-    pdf.multi_cell(0, 5, sanitizar_para_pdf(sintesis_oe), 1)
+    sintesis_oe = r_oe.get("Acciones y Resultados (síntesis de acciones) ", r_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin acciones registradas.")) if r_oe else "Sin datos registrados."
+    pdf.multi_cell(0, 5, pdf.normalize_text(sanitizar_para_pdf(sintesis_oe)), 1)
     
     pdf.ln(10)
     pdf.set_font("Helvetica", "I", 8.5)
@@ -405,7 +413,7 @@ row_mesas = mesas_f.iloc[0].to_dict() if not mesas_f.empty else {}
 row_oe = oe_f.iloc[0].to_dict() if not oe_f.empty else {}
 row_pao = pao_f.iloc[0].to_dict() if not pao_f.empty else {}
 
-# BOTÓN DE DESCARGA PDF BLINDADO CONTRA ERRORES DE SCRIPT
+# BOTÓN DE DESCARGA PDF INTEGRADO OPERACIONALMENTE
 st.sidebar.markdown("---")
 st.sidebar.subheader("Exportación Oficial")
 
@@ -419,7 +427,7 @@ try:
         use_container_width=True
     )
 except Exception as pdf_err:
-    st.sidebar.error("Error de renderizado: Datos del Sheets traen caracteres no soportados.")
+    st.sidebar.error("Error crítico de compilación en el PDF.")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Fuerza Pública de Costa Rica")
