@@ -542,7 +542,7 @@ elif pagina == "PAO Estratégico":
 # =====================================================
 
 elif pagina == "Órdenes de Ejecución":
-    st.header("Auditoría de Órdenes de Ejecución")
+    st.header("Centro de Fiscalización de Órdenes de Ejecución")
 
     if not row_oe:
         st.info("Sin registros cargados de O.E. para esta unidad policial.")
@@ -550,31 +550,268 @@ elif pagina == "Órdenes de Ejecución":
         total_oe = numero(row_oe.get("Total OE", 0))
         acciones = numero(row_oe.get("Total acciones ejecutadas", 0))
         articulacion = numero(row_oe.get("OE con articulación", 0))
+        oe_validas = numero(row_oe.get("OE válidas", 0))
+        oe_parciales = numero(row_oe.get("OE con cumplimiento parcial", 0))
+        oe_no_validas = numero(row_oe.get("OE no válidas", 0))
         sin_mal = numero(row_oe.get("OE sin planificación en MAL", 0))
+        oportunidad = numero(row_oe.get("OE en oportunidad de mejora", 0))
+        ajustadas = numero(row_oe.get("OE ajustadas por contexto trimestral", 0))
 
+        cumplimiento = convertir_porcentaje(row_oe.get("% cumplimiento", 0))
+        cumplimiento_ajustado = convertir_porcentaje(row_oe.get("% cumplimiento ajustado", 0))
+
+        estado = row_oe.get("Estado", "Sin estado")
         validador_oe = row_oe.get("Validador de la OE", "No especificado / Pendiente")
         validacion_final = row_oe.get("Validación Final", row_oe.get("Validación Final ", "Pendiente de Dictamen"))
 
+        instituciones = row_oe.get(
+            "Instituciones Participantes (Corresponsabilidad (articulación)",
+            "Sin instituciones registradas."
+        )
+
+        problematicas = row_oe.get(
+            "Problemáticas y Factores",
+            "Sin problemáticas registradas."
+        )
+
+        acciones_resultados = row_oe.get(
+            "Acciones y Resultados (síntesis de acciones) ",
+            row_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin síntesis de acciones.")
+        )
+
+        evidencia = row_oe.get(
+            "Observaciones de Evidencia",
+            "Sin observaciones de evidencia."
+        )
+
+        criterio = row_oe.get(
+            "Criterio Técnico (sustento técnico)",
+            "Sin criterio técnico registrado."
+        )
+
+        enfoque = row_oe.get(
+            "Enfoque de la OE",
+            "Sin enfoque registrado."
+        )
+
+        informe = row_oe.get(
+            "Informe automático (justificación técnica operativa)",
+            "Sin informe operativo."
+        )
+
+        # =========================
+        # BLOQUE SUPERIOR
+        # =========================
+
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Volumen Total OE", int(total_oe))
-        c2.metric("Acciones Realizadas", int(acciones))
-        c3.metric("OE con Corresponsabilidad", int(articulacion))
-        c4.metric("Fuera de M.A.L.", int(sin_mal))
+        c1.metric("Total OE", int(total_oe))
+        c2.metric("Acciones Ejecutadas", int(acciones))
+        c3.metric("OE con Articulación", int(articulacion))
+        c4.metric("Cumplimiento", f"{cumplimiento:.1f}%")
+
+        c5, c6, c7, c8 = st.columns(4)
+        c5.metric("OE Válidas", int(oe_validas))
+        c6.metric("OE Parciales", int(oe_parciales))
+        c7.metric("OE No Válidas", int(oe_no_validas))
+        c8.metric("OE sin M.A.L.", int(sin_mal))
 
         st.markdown("---")
+
+        # =========================
+        # SEMÁFORO Y GRÁFICO
+        # =========================
+
+        col1, col2 = st.columns([1, 2])
+
+        with col1:
+            st.subheader("Semáforo Técnico")
+            st.plotly_chart(
+                grafico_gauge(cumplimiento, "Cumplimiento OE"),
+                use_container_width=True
+            )
+
+        with col2:
+            st.subheader("Distribución de Órdenes de Ejecución")
+
+            df_oe_estado = pd.DataFrame({
+                "Categoría": [
+                    "OE válidas",
+                    "OE parciales",
+                    "OE no válidas",
+                    "OE sin M.A.L.",
+                    "OE oportunidad mejora",
+                    "OE ajustadas"
+                ],
+                "Cantidad": [
+                    oe_validas,
+                    oe_parciales,
+                    oe_no_validas,
+                    sin_mal,
+                    oportunidad,
+                    ajustadas
+                ]
+            })
+
+            st.plotly_chart(
+                grafico_barras(df_oe_estado, "Categoría", "Cantidad", "Estado técnico de OE"),
+                use_container_width=True
+            )
+
+        st.markdown("---")
+
+        # =========================
+        # DICTAMEN OPERATIVO
+        # =========================
+
+        st.subheader("Dictamen Técnico Operativo")
+
         st.markdown(f"""
         <div class="card info-card">
-            <h4>Ficha de Registro, Fiscalización y Control</h4>
+            <h4>Estado General de la Gestión</h4>
+            <p><b>Estado:</b> {estado}</p>
+            <p><b>Validación Final:</b> {validacion_final}</p>
             <p><b>Funcionario Técnico Evaluador:</b> {validador_oe}</p>
-            <p><b>Dictamen de Evidencias de Campo:</b> {validacion_final}</p>
+            <p><b>Cumplimiento Ajustado:</b> {cumplimiento_ajustado:.1f}%</p>
         </div>
         """, unsafe_allow_html=True)
 
-        informe = row_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.")
-        sintesis = row_oe.get("Acciones y Resultados (síntesis de acciones) ", row_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin síntesis de acciones."))
-        
-        st.markdown(f'<div class="card success-card"><h3>Justificación Operativa Automatizada</h3><p>{informe}</p></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card warning-card"><h3>Acciones de Campo Colectivas</h3><p>{sintesis}</p></div>', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="card success-card">
+            <h4>Justificación Operativa Automatizada</h4>
+            <p>{informe}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # =========================
+        # TRAZABILIDAD
+        # =========================
+
+        st.subheader("Trazabilidad, Corresponsabilidad y Enfoque")
+
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            st.markdown(f"""
+            <div class="card info-card">
+                <h4>Instituciones Participantes</h4>
+                <p>{instituciones}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown(f"""
+            <div class="card warning-card">
+                <h4>Problemáticas y Factores de Riesgo</h4>
+                <p>{problematicas}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_b:
+            st.markdown(f"""
+            <div class="card info-card">
+                <h4>Enfoque de la Orden de Ejecución</h4>
+                <p>{enfoque}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown(f"""
+            <div class="card success-card">
+                <h4>Acciones y Resultados</h4>
+                <p>{acciones_resultados}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # =========================
+        # EVIDENCIA Y CRITERIO
+        # =========================
+
+        st.subheader("Evidencia y Criterio Técnico")
+
+        col_e, col_c = st.columns(2)
+
+        with col_e:
+            st.markdown(f"""
+            <div class="card warning-card">
+                <h4>Observaciones de Evidencia</h4>
+                <p>{evidencia}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_c:
+            st.markdown(f"""
+            <div class="card danger-card">
+                <h4>Criterio Técnico</h4>
+                <p>{criterio}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # =========================
+        # ALERTAS AUTOMÁTICAS
+        # =========================
+
+        st.subheader("Alertas Operativas Automáticas")
+
+        texto_alerta = f"{criterio} {evidencia} {validacion_final}".lower()
+
+        alertas = []
+
+        if "no se planifica" in texto_alerta or sin_mal > 0:
+            alertas.append("Riesgo de planificación: existen OE sin planificación en Mesa de Articulación Local.")
+
+        if "no hay coherencia" in texto_alerta:
+            alertas.append("Riesgo de coherencia: se identifican diferencias entre planificación y ejecución.")
+
+        if "no se observa evidencia" in texto_alerta or "sin evidencia" in texto_alerta:
+            alertas.append("Riesgo documental: se identifican debilidades en la evidencia aportada.")
+
+        if "no corresponden" in texto_alerta:
+            alertas.append("Riesgo técnico: las acciones no corresponden plenamente a la problemática definida.")
+
+        if oe_no_validas > 0:
+            alertas.append("Riesgo de validez: existen Órdenes de Ejecución clasificadas como no válidas.")
+
+        if not alertas:
+            st.success("No se identifican alertas críticas automáticas en el registro evaluado.")
+        else:
+            for alerta in alertas:
+                st.markdown(f"""
+                <div class="card danger-card">
+                    <h4>Alerta</h4>
+                    <p>{alerta}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # =========================
+        # GENERACIÓN DE INFORME
+        # =========================
+
+        st.subheader("Generación de Informe Oficial")
+
+        if st.button("Crear informe de Órdenes de Ejecución", use_container_width=True):
+            with st.spinner("Generando informe oficial..."):
+                pdf_bytes = generar_pdf_nativo(
+                    row_mesas,
+                    row_oe,
+                    row_pao,
+                    region,
+                    delegacion,
+                    trimestre
+                )
+
+            st.success("Informe generado correctamente.")
+
+            st.download_button(
+                label="Descargar informe PDF",
+                data=pdf_bytes,
+                file_name=f"IF_{trimestre.replace(' ', '_')}_OE_OI_{delegacion.replace(' ', '_')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
 
 
 # =====================================================
