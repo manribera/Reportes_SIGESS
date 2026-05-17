@@ -110,7 +110,7 @@ def normalizar_texto(texto):
 
 def limpiar_df(df):
     df = df.copy()
-    # Limpia únicamente los nombres de los encabezados para preservar los tipos de datos numéricos intactos
+    # Limpia únicamente los nombres de los encabezados para preservar tipos numéricos nativos
     df.columns = df.columns.astype(str).str.strip()
     return df
 
@@ -134,8 +134,6 @@ def convertir_porcentaje(valor):
 def filtrar(df, delegacion, trimestre):
     if df.empty:
         return df
-    
-    # Filtrado pericial preservando la estructura e integridad nativa de las columnas del DataFrame
     mask_delegacion = df["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)
     mask_trimestre = df["Trimestre"].apply(normalizar_texto) == normalizar_texto(trimestre)
     return df[mask_delegacion & mask_trimestre]
@@ -245,7 +243,7 @@ except Exception as e:
 # MENÚ LATERAL DE FILTROS (SIDEBAR)
 # =====================================================
 
-# CORREGIDO: ENLACE AUTOMÁTICO DIRECTO A TU IMAGEN LOCAL
+# CARGA DIRECTA DE TU LOGOTIPO
 try:
     st.sidebar.image("logo_sigess.png", use_container_width=True)
 except Exception:
@@ -298,7 +296,6 @@ mesas_region = filtrar_region(mesas, region, trimestre)
 oe_region = filtrar_region(oe, region, trimestre)
 pao_region = filtrar_region(pao, region, trimestre)
 
-# Datos históricos longitudinales completos de la unidad seleccionada
 mesas_historico = mesas[mesas["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)]
 oe_historico = oe[oe["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)]
 
@@ -355,7 +352,6 @@ if pagina == "Inicio Ejecutivo":
 
     st.markdown("---")
     
-    # RESTAURADO Y CORREGIDO: SECCIÓN DE EVOLUCIÓN TEMPORAL LONGITUDINAL
     st.subheader("Evolución Cronológica del Año (Líneas de Tiempo)")
     col_t1, col_t2 = st.columns(2)
     with col_t1:
