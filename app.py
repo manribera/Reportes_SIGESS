@@ -4,6 +4,8 @@ import gspread
 import plotly.express as px
 import plotly.graph_objects as go
 from google.oauth2.service_account import Credentials
+import weasyprint
+import base64
 
 # =====================================================
 # CONFIGURACIÓN GENERAL DE LA APP
@@ -72,10 +74,6 @@ div[data-testid="stMetricLabel"] {
 .info-card {
     border-left: 6px solid #3B82F6;
 }
-.small-text {
-    color: #D1D5DB;
-    font-size: 14px;
-}
 .big-title {
     font-size: 30px;
     font-weight: 700;
@@ -110,7 +108,6 @@ def normalizar_texto(texto):
 
 def limpiar_df(df):
     df = df.copy()
-    # Limpia únicamente los nombres de los encabezados para preservar tipos numéricos nativos
     df.columns = df.columns.astype(str).str.strip()
     return df
 
@@ -147,14 +144,195 @@ def filtrar_region(df, region, trimestre):
     return df[mask_region & mask_trimestre]
 
 
-def clasificar_estado(valor):
-    valor = convertir_porcentaje(valor)
-    if valor >= 85:
-        return "CUMPLE", "success-card"
-    elif valor >= 70:
-        return "CUMPLE PARCIALMENTE", "warning-card"
-    else:
-        return "NO CUMPLE / BAJO AVANCE", "danger-card"
+# =====================================================
+# MOTOR DE GENERACIÓN DE REPORTE PDF (WEASYPRINT)
+# =====================================================
+
+def generar_pdf_pericial(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
+    # Extracción segura de métricas clave
+    val_pao = convertir_porcentaje(r_pao.get("AVANCE_PAO_%", 0)) if r_pao else 0.0
+    val_mal = convertir_porcentaje(r_mesas.get("% Cumplimiento Integral", 0)) if r_mesas else 0.0
+    
+    just_mal = r_mesas.get("Justificación Técnica Operativa", "Sin registro de justificación técnica.") if r_mesas else "N/A"
+    informe_oe = r_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.") if r_oe else "N/A"
+    sintesis_oe = r_oe.get("Acciones y Resultados (síntesis de acciones) ", r_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin acciones registradas.")) if r_oe else "N/A"
+    
+    # Conversión de la imagen del logotipo a Base64 para inyección directa en el PDF
+    try:
+        with open("logo_sigess.png", "rb") as img_file:
+            logo_b64 = base64.b64encode(img_file.read()).decode('utf-8')
+            img_html = f'<img src="data:image/png;base64,{logo_b64}" style="height: 65px;">'
+    except Exception:
+        img_html = '<div style="font-weight:bold; color:#1E3A8A;">SIGESS 2026</div>'
+
+    html_content = f"""
+    <html>
+    <head>
+        <style>
+            @page {{
+                size: A4;
+                margin: 20mm 15mm;
+                @bottom-right {{
+                    content: "Página " counter(page) " de " counter(pages);
+                    font-size: 9pt;
+                    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                    color: #6B7280;
+                }}
+            }}
+            body {{
+                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                color: #1F2937;
+                line-height: 1.5;
+                font-size: 10pt;
+            }}
+            .header-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-bottom: 25px;
+                border-bottom: 3px solid #1E3A8A;
+                padding-bottom: 10px;
+            }}
+            .title-institucion {{
+                font-size: 14pt;
+                font-weight: bold;
+                color: #1E3A8A;
+                text-transform: uppercase;
+            }}
+            .subtitle-reporte {{
+                font-size: 11pt;
+                color: #4B5563;
+                margin-top: 3px;
+            }}
+            .section-title {{
+                font-size: 12pt;
+                font-weight: bold;
+                color: #1E3A8A;
+                background-color: #F3F4F6;
+                padding: 6px 10px;
+                margin-top: 20px;
+                margin-bottom: 10px;
+                border-left: 4px solid #1E3A8A;
+            }}
+            .meta-grid {{
+                width: 100%;
+                margin-bottom: 15px;
+            }}
+            .meta-label {{
+                font-weight: bold;
+                color: #374151;
+                width: 25%;
+            }}
+            .metric-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-bottom: 20px;
+            }}
+            .metric-table th {{
+                background-color: #0F172A;
+                color: #FFFFFF;
+                font-weight: bold;
+                text-align: center;
+                padding: 8px;
+                font-size: 9.5pt;
+            }}
+            .metric-table td {{
+                border: 1px solid #D1D5DB;
+                padding: 10px;
+                text-align: center;
+                font-size: 11pt;
+                font-weight: bold;
+            }}
+            .card-justificacion {{
+                border: 1px solid #E5E7EB;
+                border-left: 5px solid #22C55E;
+                background-color: #F9FAFB;
+                padding: 12px;
+                margin-bottom: 15px;
+                border-radius: 4px;
+                text-align: justify;
+            }}
+            .card-oe-info {{
+                border: 1px solid #E5E7EB;
+                border-left: 5px solid #3B82F6;
+                background-color: #F9FAFB;
+                padding: 12px;
+                margin-bottom: 15px;
+                border-radius: 4px;
+                text-align: justify;
+            }}
+        </style>
+    </head>
+    <body>
+        <table class="header-table">
+            <tr>
+                <td style="width: 70%;">
+                    <div class="title-institucion">MINISTERIO DE PÚBLICA SEGURIDAD</div>
+                    <div class="subtitle-reporte">Estrategia Sembremos Seguridad — SIGESS 2026</div>
+                    <div style="font-size: 9pt; color: #6B7280; margin-top: 5px;">Informe Técnico Analítico de Gestión Policial</div>
+                </td>
+                <td style="width: 30%; text-align: right; vertical-align: middle;">
+                    {img_html}
+                </td>
+            </tr>
+        </table>
+
+        <table class="meta-grid">
+            <tr>
+                <td class="meta-label">Delegación Regional:</td>
+                <td>{region}</td>
+                <td class="meta-label">Fecha de Reporte:</td>
+                <td>17/05/2026</td>
+            </tr>
+            <tr>
+                <td class="meta-label">Unidad Cantonal:</td>
+                <td>{delegacion}</td>
+                <td class="meta-label">Corte Evaluado:</td>
+                <td>{trimestre}</td>
+            </tr>
+        </table>
+
+        <div class="section-title">1. Resumen Ejecutivo de Rendimiento Estructurado</div>
+        <table class="metric-table">
+            <thead>
+                <tr>
+                    <th style="width: 33.3%;">Cumplimiento M.A.L.</th>
+                    <th style="width: 33.3%;">Eficiencia Real PAO</th>
+                    <th style="width: 33.3%;">Volumen de Órdenes de Ejecución</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="color: #1E3A8A;">{val_mal:.1f}%</td>
+                    <td style="color: #16A34A;">{val_pao:.1f}%</td>
+                    <td>{int(numero(r_oe.get("Total OE", 0))) if r_oe else 0} OE</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="section-title">2. Evaluación de Mesas de Articulación Local (M.A.L.)</div>
+        <div style="margin-bottom: 5px;"><b>Dictamen de Trazabilidad y Gobernanza:</b></div>
+        <div class="card-justificacion">
+            {just_mal}
+        </div>
+
+        <div class="section-title">3. Fiscalización Operativa de Órdenes de Ejecución</div>
+        <div style="margin-bottom: 5px;"><b>Justificación Operativa Automatizada:</b></div>
+        <div class="card-oe-info">
+            {informe_oe}
+        </div>
+        <div style="margin-bottom: 5px;"><b>Acciones de Campo Colectivas y Corresponsabilidad:</b></div>
+        <div class="card-oe-info" style="border-left-color: #F59E0B;">
+            {sintesis_oe}
+        </div>
+
+        <div style="margin-top: 40px; text-align: center; font-size: 8.5pt; color: #9CA3AF;">
+            Documento generado de forma automatizada por la Coordinación Nacional SIGESS 2026.<br>
+            Fuerza Pública de Costa Rica — Gestión por Resultados.
+        </div>
+    </body>
+    </html>
+    """
+    return weasyprint.HTML(string=html_content).write_pdf()
 
 
 # =====================================================
@@ -197,7 +375,6 @@ def grafico_barras(df, x, y, titulo=""):
 
 def grafico_linea_tiempo(df_historico, metrica_col, titulo):
     orden_trimestres = {"i trimestre": 1, "ii trimestre": 2, "iii trimestre": 3, "iv trimestre": 4}
-    
     df_plot = df_historico.copy()
     df_plot["orden"] = df_plot["Trimestre"].apply(normalizar_texto).map(orden_trimestres)
     df_plot = df_plot.dropna(subset=["orden"]).sort_values("orden")
@@ -240,10 +417,9 @@ except Exception as e:
 
 
 # =====================================================
-# MENÚ LATERAL DE FILTROS (SIDEBAR)
+# MENÚ LATERAL DE FILTROS Y CONTROLES (SIDEBAR)
 # =====================================================
 
-# CARGA DIRECTA DE TU LOGOTIPO
 try:
     st.sidebar.image("logo_sigess.png", use_container_width=True)
 except Exception:
@@ -280,6 +456,28 @@ trimestre = st.sidebar.selectbox(
     ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"]
 )
 
+# Extracción de filas específicas para inyección de datos y PDF
+mesas_f = filtrar(mesas, delegacion, trimestre)
+oe_f = filtrar(oe, delegacion, trimestre)
+pao_f = filtrar(pao, delegacion, trimestre)
+
+row_mesas = mesas_f.iloc[0].to_dict() if not mesas_f.empty else None
+row_oe = oe_f.iloc[0].to_dict() if not oe_f.empty else None
+row_pao = pao_f.iloc[0].to_dict() if not pao_f.empty else None
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Exportación Oficial")
+
+# Generación dinámica del archivo PDF blindado
+pdf_data = generar_pdf_pericial(row_mesas, row_oe, row_pao, region, delegacion, trimestre)
+st.sidebar.download_button(
+    label="Descargar Informe PDF",
+    data=pdf_data,
+    file_name=f"Informe_SIGESS_{delegacion.replace(' ', '_')}_{trimestre.replace(' ', '_')}.pdf",
+    mime="application/pdf",
+    use_container_width=True
+)
+
 st.sidebar.markdown("---")
 st.sidebar.caption("Fuerza Pública de Costa Rica")
 
@@ -287,10 +485,6 @@ st.sidebar.caption("Fuerza Pública de Costa Rica")
 # =====================================================
 # PROCESAMIENTO E INYECCIÓN DE DATOS FILTRADOS
 # =====================================================
-
-mesas_f = filtrar(mesas, delegacion, trimestre)
-oe_f = filtrar(oe, delegacion, trimestre)
-pao_f = filtrar(pao, delegacion, trimestre)
 
 mesas_region = filtrar_region(mesas, region, trimestre)
 oe_region = filtrar_region(oe, region, trimestre)
@@ -321,12 +515,12 @@ if pagina == "Inicio Ejecutivo":
     total_pao = len(pao_f) if not pao_f.empty else 0
 
     avance_pao = 0.0
-    if not pao_f.empty and "AVANCE_PAO_%" in pao_f.columns:
-        avance_pao = convertir_porcentaje(pao_f["AVANCE_PAO_%"].iloc[0])
+    if row_pao and "AVANCE_PAO_%" in row_pao:
+        avance_pao = convertir_porcentaje(row_pao["AVANCE_PAO_%"])
 
     cumplimiento_mal = 0.0
-    if not mesas_f.empty and "% Cumplimiento Integral" in mesas_f.columns:
-        cumplimiento_mal = convertir_porcentaje(mesas_f["% Cumplimiento Integral"].iloc[0])
+    if row_mesas and "% Cumplimiento Integral" in row_mesas:
+        cumplimiento_mal = convertir_porcentaje(row_mesas["% Cumplimiento Integral"])
 
     nota_anual_absoluta = mesas_historico["% Cumplimiento Integral"].apply(numero).sum() / 4.0
     nota_anual_absoluta = convertir_porcentaje(nota_anual_absoluta)
@@ -351,7 +545,6 @@ if pagina == "Inicio Ejecutivo":
         st.plotly_chart(grafico_gauge(nota_anual_absoluta, "Meta Cierre de Año"), use_container_width=True)
 
     st.markdown("---")
-    
     st.subheader("Evolución Cronológica del Año (Líneas de Tiempo)")
     col_t1, col_t2 = st.columns(2)
     with col_t1:
@@ -370,14 +563,13 @@ if pagina == "Inicio Ejecutivo":
 elif pagina == "PAO Estratégico":
     st.header("PAO Estratégico y Despliegue Metodológico")
 
-    if pao_f.empty:
+    if not row_pao:
         st.info("Sin registros de auditoría PAO cargados para este periodo.")
     else:
-        fila = pao_f.iloc[0]
-        avance = convertir_porcentaje(fila.get("AVANCE_PAO_%", 0))
-        total_pao = numero(fila.get("TOTAL_PAO_100", 0))
-        despliegue = numero(fila.get("DESPLIEGUE_10", 0))
-        estado_pao = fila.get("ESTADO_AVANCE_PAO", "Sin estado")
+        avance = convertir_porcentaje(row_pao.get("AVANCE_PAO_%", 0))
+        total_pao = numero(row_pao.get("TOTAL_PAO_100", 0))
+        despliegue = numero(row_pao.get("DESPLIEGUE_10", 0))
+        estado_pao = row_pao.get("ESTADO_AVANCE_PAO", "Sin estado")
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Avance Real", f"{avance:.1f}%")
@@ -393,13 +585,13 @@ elif pagina == "PAO Estratégico":
         with col2:
             st.subheader("Cumplimiento por Puntos Clave")
             componentes = {
-                "Validación DR": fila.get("INSTR_DR_5", 0),
-                "Validación Delegación": fila.get("INSTR_DELEG_5", 0),
-                "Recolección": fila.get("RECOLECCION_15", 0),
-                "MIC-MAC": fila.get("MICMAC_15", 0),
-                "Triángulo": fila.get("TRIANGULO_10", 0),
-                "Líneas": fila.get("LINEAS_25", 0),
-                "Informe": fila.get("INFORME_25", 0),
+                "Validación DR": row_pao.get("INSTR_DR_5", 0),
+                "Validación Delegación": row_pao.get("INSTR_DELEG_5", 0),
+                "Recolección": row_pao.get("RECOLECCION_15", 0),
+                "MIC-MAC": row_pao.get("MICMAC_15", 0),
+                "Triángulo": row_pao.get("TRIANGULO_10", 0),
+                "Líneas": row_pao.get("LINEAS_25", 0),
+                "Informe": row_pao.get("INFORME_25", 0),
             }
             df_comp = pd.DataFrame({"Componente": list(componentes.keys()), "Puntaje": [numero(v) for v in componentes.values()]})
             st.plotly_chart(grafico_barras(df_comp, "Componente", "Puntaje"), use_container_width=True)
@@ -412,18 +604,16 @@ elif pagina == "PAO Estratégico":
 elif pagina == "Órdenes de Ejecución":
     st.header("Auditoría de Órdenes de Ejecución")
 
-    if oe_f.empty:
+    if not row_oe:
         st.info("Sin registros cargados de O.E. para esta unidad policial.")
     else:
-        fila = oe_f.iloc[0]
-        total_oe = numero(fila.get("Total OE", 0))
-        acciones = numero(fila.get("Total acciones ejecutadas", 0))
-        articulacion = numero(fila.get("OE con articulación", 0))
-        sin_mal = numero(fila.get("OE sin planificación en MAL", 0))
-        pct_oe = convertir_porcentaje(fila.get("% cumplimiento", 0))
+        total_oe = numero(row_oe.get("Total OE", 0))
+        acciones = numero(row_oe.get("Total acciones ejecutadas", 0))
+        articulacion = numero(row_oe.get("OE con articulación", 0))
+        sin_mal = numero(row_oe.get("OE sin planificación en MAL", 0))
 
-        validador_oe = fila.get("Validador de la OE", "No especificado / Pendiente")
-        validacion_final = fila.get("Validación Final", fila.get("Validación Final ", "Pendiente de Dictamen"))
+        validador_oe = row_oe.get("Validador de la OE", "No especificado / Pendiente")
+        validacion_final = row_oe.get("Validación Final", row_oe.get("Validación Final ", "Pendiente de Dictamen"))
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Volumen Total OE", int(total_oe))
@@ -432,7 +622,6 @@ elif pagina == "Órdenes de Ejecución":
         c4.metric("Fuera de M.A.L.", int(sin_mal))
 
         st.markdown("---")
-        
         st.markdown(f"""
         <div class="card info-card">
             <h4>Ficha de Registro, Fiscalización y Control</h4>
@@ -441,8 +630,8 @@ elif pagina == "Órdenes de Ejecución":
         </div>
         """, unsafe_allow_html=True)
 
-        informe = fila.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.")
-        sintesis = fila.get("Acciones y Resultados (síntesis de acciones) ", fila.get("Acciones y Resultados (síntesis de acciones)", "Sin síntesis de acciones."))
+        informe = row_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.")
+        sintesis = row_oe.get("Acciones y Resultados (síntesis de acciones) ", row_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin síntesis de acciones."))
         
         st.markdown(f'<div class="card success-card"><h3>Justificación Operativa Automatizada</h3><p>{informe}</p></div>', unsafe_allow_html=True)
         st.markdown(f'<div class="card warning-card"><h3>Acciones de Campo Colectivas</h3><p>{sintesis}</p></div>', unsafe_allow_html=True)
@@ -455,17 +644,15 @@ elif pagina == "Órdenes de Ejecución":
 elif pagina == "Mesas de Articulación":
     st.header("Módulo de Mesas de Articulación Local")
 
-    if mesas_f.empty:
+    if not row_mesas:
         st.info("No hay evidencias registradas para esta Mesa de Articulación Local.")
     else:
-        fila = mesas_f.iloc[0]
-        cumplimiento = convertir_porcentaje(fila.get("% Cumplimiento Integral", 0))
-        total_envios = numero(fila.get("Total Envíos", 0))
-        trazabilidad = fila.get("Nivel de Trazabilidad", "Sin registro")
-        fase = fila.get("Fase de Madurez Operativa", "Sin registro")
-        estado_gestion = fila.get("Estado de Gestión", "Sin estado")
-
-        validador_mesa = fila.get("Validador de la Mesa", "Funcionario No Asignado")
+        cumplimiento = convertir_porcentaje(row_mesas.get("% Cumplimiento Integral", 0))
+        total_envios = numero(row_mesas.get("Total Envíos", 0))
+        trazabilidad = row_mesas.get("Nivel de Trazabilidad", "Sin registro")
+        fase = row_mesas.get("Fase de Madurez Operativa", "Sin registro")
+        estado_gestion = row_mesas.get("Estado de Gestión", "Sin estado")
+        validador_mesa = row_mesas.get("Validador de la Mesa", "Funcionario No Asignado")
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Nota del Periodo", f"{cumplimiento:.1f}%")
@@ -474,7 +661,6 @@ elif pagina == "Mesas de Articulación":
         c4.metric("Condición de Entrega", estado_gestion)
 
         st.markdown("---")
-        
         st.markdown(f"""
         <div class="card info-card">
             <h4>Estatus de Integridad de la Mesa</h4>
@@ -483,7 +669,7 @@ elif pagina == "Mesas de Articulación":
         </div>
         """, unsafe_allow_html=True)
 
-        justificacion = fila.get("Justificación Técnica Operativa", "Sin registro pericial.")
+        justificacion = row_mesas.get("Justificación Técnica Operativa", "Sin registro pericial.")
         st.markdown(f'<div class="card success-card"><h3>Justificación Técnica Operativa</h3><p>{justificacion}</p></div>', unsafe_allow_html=True)
 
 
@@ -493,7 +679,6 @@ elif pagina == "Mesas de Articulación":
 
 elif pagina == "Comparativa de Trimestres":
     st.header("Módulo de Comparación Multi-Periodo (Benchmarking Side-by-Side)")
-    st.caption(f"Análisis evolutivo directo para la unidad: {delegacion}")
     st.markdown("---")
 
     col_sel1, col_sel2 = st.columns(2)
@@ -517,18 +702,15 @@ elif pagina == "Comparativa de Trimestres":
             if not df_izq.empty:
                 st.markdown(f"""<div class="card info-card"><h5>Detalle Técnico {t_izq}</h5>
                 <p><b>Estado de Gestión:</b> {df_izq['Estado de Gestión'].iloc[0]}<br>
-                <b>Gobernanza:</b> {df_izq['Índice Gobernanza Local'].iloc[0]}<br>
-                <b>Validador:</b> {df_izq['Validador de la Mesa'].iloc[0]}</p></div>""", unsafe_allow_html=True)
+                <b>Gobernanza:</b> {df_izq['Índice Gobernanza Local'].iloc[0]}</p></div>""", unsafe_allow_html=True)
         with c_d:
             st.plotly_chart(grafico_gauge(nota_der, f"Nota en {t_der}"), use_container_width=True)
             if not df_der.empty:
                 st.markdown(f"""<div class="card success-card"><h5>Detalle Técnico {t_der}</h5>
                 <p><b>Estado de Gestión:</b> {df_der['Estado de Gestión'].iloc[0]}<br>
-                <b>Gobernanza:</b> {df_der['Índice Gobernanza Local'].iloc[0]}<br>
-                <b>Validador:</b> {df_der['Validador de la Mesa'].iloc[0]}</p></div>""", unsafe_allow_html=True)
+                <b>Gobernanza:</b> {df_der['Índice Gobernanza Local'].iloc[0]}</p></div>""", unsafe_allow_html=True)
 
         st.markdown("---")
-        st.subheader("Delta Real de Variación")
         df_delta = pd.DataFrame({
             "Periodo Evaluado": [t_izq, t_der],
             "Porcentaje de Cumplimiento %": [nota_izq, nota_der]
@@ -549,30 +731,20 @@ elif pagina == "Consolidado Regional":
     c3.metric("Fichas PAO Región", len(pao_region))
 
     st.markdown("---")
-
     mask_cantones = control["Delegación Regional"].apply(normalizar_texto) == normalizar_texto(region)
     cantones_region = sorted(control[mask_cantones]["Delegación Policial"].dropna().unique())
 
     datos_resumen = []
     for c in cantones_region:
-        df_mal_c = mesas_region[mesas_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)]
-        df_oe_c = oe_region[oe_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)]
         df_pao_c = pao_region[pao_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)]
-
-        avance_pao_reg = 0.0
-        if not df_pao_c.empty and "AVANCE_PAO_%" in df_pao_c.columns:
-            avance_pao_reg = convertir_porcentaje(df_pao_c["AVANCE_PAO_%"].iloc[0])
+        avance_pao_reg = convertir_porcentaje(df_pao_c["AVANCE_PAO_%"].iloc[0]) if not df_pao_c.empty else 0.0
 
         datos_resumen.append({
             "Delegación Policial": c,
-            "Envíos M.A.L.": len(df_mal_c),
-            "Volumen O.E.": len(df_oe_c),
-            "Auditorías PAO": len(df_pao_c),
             "Eficiencia PAO %": avance_pao_reg
         })
 
     df_resumen = pd.DataFrame(datos_resumen)
-
     st.subheader("Eficiencia del PAO por Comandancia")
     fig1 = px.bar(df_resumen, x="Delegación Policial", y="Eficiencia PAO %", text="Eficiencia PAO %")
     fig1.update_layout(paper_bgcolor="#111827", plot_bgcolor="#111827", font_color="white", xaxis_tickangle=-45)
