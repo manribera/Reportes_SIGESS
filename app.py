@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from google.oauth2.service_account import Credentials
 
 # =====================================================
-# CONFIGURACIÓN
+# CONFIGURACIÓN GENERAL DE LA APP
 # =====================================================
 
 st.set_page_config(
@@ -23,7 +23,7 @@ SCOPES = [
 ]
 
 # =====================================================
-# ESTILO
+# INTERFAZ ESTÉTICA (CSS PERSONALIZADO)
 # =====================================================
 
 st.markdown("""
@@ -84,7 +84,7 @@ div[data-testid="stMetricLabel"] {
 """, unsafe_allow_html=True)
 
 # =====================================================
-# FUNCIONES
+# FUNCIONES PERICIALES DE LIMPIEZA Y PROCESAMIENTO
 # =====================================================
 
 @st.cache_data(ttl=300)
@@ -100,52 +100,73 @@ def cargar_hoja(sheet_url, nombre_hoja):
 
 def limpiar_df(df):
     df = df.copy()
+    # 1. Limpieza de espacios en los encabezados de columnas
     df.columns = df.columns.astype(str).str.strip()
 
+    # 2. Control profundo sobre columnas clave de control territorial
     for col in ["Delegación Regional", "Delegación Policial", "Trimestre"]:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
+            # Elimina saltos de línea internos y limpia espacios en extremos
+            df[col] = df[col].astype(str).str.replace(r'[\r\n]+', '', regex=True).str.strip()
+            
+    # 3. Arreglo definitivo para espacios múltiples intermedios en el texto (ej: "I Trimestre ")
+    if "Trimestre" in df.columns:
+        df["Trimestre"] = df["Trimestre"].str.replace(r'\s+', ' ', regex=True).str.strip()
 
     return df
 
 
 def numero(valor):
     try:
+        if isinstance(valor, str):
+            # Elimina símbolos de porcentaje y limpia espacios antes de convertir
+            valor = valor.replace('%', '').strip()
         return float(valor)
     except Exception:
-        return 0
+        return 0.0
 
 
 def convertir_porcentaje(valor):
     valor = numero(valor)
-    if valor <= 1:
-        return valor * 100
+    # Si viene en formato decimal (ej: 0.85), lo escala a entero (85.0)
+    if valor <= 1.0 and valor > 0.0:
+        return valor * 100.0
     return valor
+
+
+def normalizar_texto(texto):
+    # Remueve tildes, mayúsculas y espacios para garantizar cruces 100% efectivos
+    return (str(texto).lower().strip()
+            .replace('á', 'a')
+            .replace('é', 'e')
+            .replace('í', 'i')
+            .replace('ó', 'o')
+            .replace('ú', 'u'))
 
 
 def filtrar(df, delegacion, trimestre):
     if df.empty:
         return df
 
-    return df[
-        (df["Delegación Policial"] == delegacion) &
-        (df["Trimestre"] == trimestre)
-    ]
+    # Filtrado tolerante a fallas de digitación o acentos en el Sheets
+    mask_delegacion = df["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)
+    mask_trimestre = df["Trimestre"].apply(normalizar_texto) == normalizar_texto(trimestre)
+    
+    return df[mask_delegacion & mask_trimestre]
 
 
 def filtrar_region(df, region, trimestre):
     if df.empty:
         return df
 
-    return df[
-        (df["Delegación Regional"] == region) &
-        (df["Trimestre"] == trimestre)
-    ]
+    mask_region = df["Delegación Regional"].apply(normalizar_texto) == normalizar_texto(region)
+    mask_trimestre = df["Trimestre"].apply(normalizar_texto) == normalizar_texto(trimestre)
+    
+    return df[mask_region & mask_trimestre]
 
 
 def clasificar_estado(valor):
     valor = convertir_porcentaje(valor)
-
     if valor >= 85:
         return "CUMPLE", "success-card"
     elif valor >= 70:
@@ -154,20 +175,24 @@ def clasificar_estado(valor):
         return "NO CUMPLE / BAJO AVANCE", "danger-card"
 
 
+# =====================================================
+# COMPONENTES VISUALES (PLOTLY)
+# =====================================================
+
 def grafico_gauge(valor, titulo):
     valor = convertir_porcentaje(valor)
 
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=valor,
-        title={"text": titulo},
+        title={"text": titulo, "font": {"size": 18}},
         gauge={
-            "axis": {"range": [0, 100]},
-            "bar": {"color": "#22C55E"},
+            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "white"},
+            "bar": {"color": "#3B82F6"}, # Azul estructural de barra
             "steps": [
-                {"range": [0, 69], "color": "#7F1D1D"},
-                {"range": [70, 84], "color": "#92400E"},
-                {"range": [85, 100], "color": "#14532D"}
+                {"range": [0, 69], "color": "#7F1D1D"},   # Rojo Crítico
+                {"range": [70, 84], "color": "#92400E"},  # Amarillo / Naranja Regular
+                {"range": [85, 100], "color": "#14532D"}  # Verde Óptimo
             ]
         }
     ))
@@ -175,10 +200,9 @@ def grafico_gauge(valor, titulo):
     fig.update_layout(
         paper_bgcolor="#111827",
         font_color="white",
-        height=300,
-        margin=dict(l=20, r=20, t=40, b=20)
+        height=260,
+        margin=dict(l=30, r=30, t=50, b=20)
     )
-
     return fig
 
 
@@ -197,11 +221,12 @@ def grafico_barras(df, x, y, titulo=""):
         xaxis_tickangle=-25,
         margin=dict(l=20, r=20, t=40, b=20)
     )
+    fig.update_traces(marker_color='#3B82F6', textposition='outside')
     return fig
 
 
 # =====================================================
-# CARGA DE DATOS
+# EXTRACCIÓN Y LIMPIEZA DE SÁBANAS DESDE GOOGLE
 # =====================================================
 
 try:
@@ -210,19 +235,20 @@ try:
     pao = limpiar_df(cargar_hoja(URL_MASTER, "PAO_FINAL"))
     control = limpiar_df(cargar_hoja(URL_MASTER, "CONTROL_FILTROS"))
 except Exception as e:
-    st.error("No se pudieron cargar los datos desde Google Sheets.")
+    st.error("Error Crítico: No se pudieron extraer los datos desde Google Sheets.")
     st.exception(e)
     st.stop()
 
+
 # =====================================================
-# SIDEBAR
+# MENÚ LATERAL DE FILTROS (SIDEBAR)
 # =====================================================
 
 st.sidebar.title("SIGESS 2026")
 st.sidebar.caption("Centro de Monitoreo Estratégico")
 
 pagina = st.sidebar.radio(
-    "Navegación",
+    "Navegación Módulos",
     [
         "Inicio Ejecutivo",
         "PAO Estratégico",
@@ -234,32 +260,29 @@ pagina = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
-region = st.sidebar.selectbox(
-    "Delegación Regional",
-    sorted(control["Delegación Regional"].dropna().unique())
-)
+# Carga dinámica de filtros regionales sin duplicados
+regiones_disponibles = sorted(control["Delegación Regional"].dropna().unique())
+region = st.sidebar.selectbox("Delegación Regional", regiones_disponibles)
 
-delegaciones = sorted(
-    control[control["Delegación Regional"] == region]["Delegación Policial"]
+# Carga de delegaciones vinculadas estrictamente a la región seleccionada
+delegaciones_vinculadas = sorted(
+    control[control["Delegación Regional"].apply(normalizar_texto) == normalizar_texto(region)]["Delegación Policial"]
     .dropna()
     .unique()
 )
-
-delegacion = st.sidebar.selectbox(
-    "Delegación Policial",
-    delegaciones
-)
+delegacion = st.sidebar.selectbox("Delegación Policial", delegaciones_vinculadas)
 
 trimestre = st.sidebar.selectbox(
-    "Trimestre",
+    "Trimestre de Auditoría",
     ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"]
 )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Fuente: SIGESS 2026")
+st.sidebar.caption("Estrategia Sembremos Seguridad")
+
 
 # =====================================================
-# DATOS FILTRADOS
+# EJECUCIÓN DE FILTROS OPERACIONALES
 # =====================================================
 
 mesas_f = filtrar(mesas, delegacion, trimestre)
@@ -270,78 +293,93 @@ mesas_region = filtrar_region(mesas, region, trimestre)
 oe_region = filtrar_region(oe, region, trimestre)
 pao_region = filtrar_region(pao, region, trimestre)
 
+
 # =====================================================
-# ENCABEZADO GENERAL
+# ENCABEZADO GENERAL DE LA PLATAFORMA
 # =====================================================
 
-st.markdown('<div class="big-title">SIGESS 2026</div>', unsafe_allow_html=True)
-st.caption(f"{region} | {delegacion} | {trimestre}")
+st.markdown('<div class="big-title">SIGESS 2026 — CENTRO DE CONTROL</div>', unsafe_allow_html=True)
+st.caption(f"Área Operativa: {region} | Unidad: {delegacion} | Temporalidad: {trimestre}")
 st.markdown("---")
 
+
 # =====================================================
-# INICIO EJECUTIVO
+# MÓDULO 1: INICIO EJECUTIVO (PANTALLA PRINCIPAL)
 # =====================================================
 
 if pagina == "Inicio Ejecutivo":
 
-    st.header("Inicio Ejecutivo")
+    st.header("Resumen del Estado Policial")
 
-    total_mesas = len(mesas_f)
-    total_oe = len(oe_f)
-    total_pao = len(pao_f)
+    # Blindaje contra índices vacíos para evitar caídas del sistema
+    total_mesas = len(mesas_f) if not mesas_f.empty else 0
+    total_oe = len(oe_f) if not oe_f.empty else 0
+    total_pao = len(pao_f) if not pao_f.empty else 0
 
-    avance_pao = 0
+    avance_pao = 0.0
     if not pao_f.empty and "AVANCE_PAO_%" in pao_f.columns:
         avance_pao = convertir_porcentaje(pao_f["AVANCE_PAO_%"].iloc[0])
 
-    cumplimiento_mal = 0
+    cumplimiento_mal = 0.0
     if not mesas_f.empty and "% Cumplimiento Integral" in mesas_f.columns:
         cumplimiento_mal = convertir_porcentaje(mesas_f["% Cumplimiento Integral"].iloc[0])
 
+    # FÓRMULA DE PROYECCIÓN ANUAL ABSOLUTA (Basada en los 4 periodos obligatorios)
+    # Suma las notas reales registradas del año de esa delegación y las divide estrictamente entre 4
+    df_todas_mesas_anio = mesas[mesas["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)]
+    nota_anual_absoluta = 0.0
+    if not df_todas_mesas_anio.empty:
+        nota_anual_absoluta = df_todas_mesas_anio["% Cumplimiento Integral"].apply(numero).sum() / 4.0
+        nota_anual_absoluta = convertir_porcentaje(nota_anual_absoluta)
+
+    # Bloque de KPIs Principales en fila
     c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric("Mesas", total_mesas)
-    c2.metric("Órdenes de Ejecución", total_oe)
-    c3.metric("PAO", total_pao)
-    c4.metric("Avance PAO", f"{avance_pao:.1f}%")
+    c1.metric("Registros en Mesas (MAL)", total_mesas)
+    c2.metric("Órdenes de Ejecución (OE)", total_oe)
+    c3.metric("Plan Operativo (PAO)", total_pao)
+    c4.metric("Porcentaje Avance PAO", f"{avance_pao:.1f}%")
 
     st.markdown("---")
 
-    col1, col2 = st.columns(2)
-
+    # Despliegue de Tacómetros de Medición
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.subheader("Cumplimiento MAL")
-        st.plotly_chart(grafico_gauge(cumplimiento_mal, "MAL"), use_container_width=True)
-
+        st.subheader("Cumplimiento M.A.L.")
+        st.plotly_chart(grafico_gauge(cumplimiento_mal, "Trimestral"), use_container_width=True)
     with col2:
-        st.subheader("Avance PAO")
-        st.plotly_chart(grafico_gauge(avance_pao, "PAO"), use_container_width=True)
+        st.subheader("Avance del PAO")
+        st.plotly_chart(grafico_gauge(avance_pao, "Trimestral"), use_container_width=True)
+    with col3:
+        st.subheader("Proyección Cumplimiento Anual")
+        # Medidor calibrado con la fórmula estricta de acumulación anual absoluta (esfuerzo/4)
+        st.plotly_chart(grafico_gauge(nota_anual_absoluta, "Fórmula Absoluta Anual"), use_container_width=True)
 
     st.markdown("---")
 
-    estado, clase = clasificar_estado(avance_pao)
-
+    # Cuadro de estado dinámico institucional
+    estado, clase = clasificar_estado(cumplimiento_mal)
     st.markdown(f"""
     <div class="card {clase}">
-        <h3>Lectura Ejecutiva</h3>
-        <p>La delegación seleccionada presenta un estado general de <b>{estado}</b> para el periodo evaluado.</p>
+        <h3>Lectura Ejecutiva de Control Mando</h3>
+        <p>La unidad policial presenta un estado de rendimiento de: <b>{estado}</b> en el eje de Mesas de Articulación.</p>
         <p class="small-text">
-        El sistema muestra la información disponible por componente. Si una sección aparece sin registros,
-        esto no implica error del sistema, sino ausencia de datos registrados para la delegación y trimestre seleccionados.
+        <b>Nota de Fiscalización:</b> Conforme a las directrices de la Dirección de Operaciones, la Proyección de Cumplimiento Anual calcula de forma estricta la constancia institucional. 
+        Si una delegación obtiene un 100% en el primer trimestre pero no registra actividad el resto del año, su nota final absoluta será del 25%.
         </p>
     </div>
     """, unsafe_allow_html=True)
 
+
 # =====================================================
-# PAO ESTRATÉGICO
+# MÓDULO 2: PLAN ANUAL OPERATIVO (PAO ESTRATÉGICO)
 # =====================================================
 
 elif pagina == "PAO Estratégico":
 
-    st.header("PAO Estratégico / Despliegue")
+    st.header("PAO Estratégico / Despliegue de Diagnóstico")
 
     if pao_f.empty:
-        st.info("Sin registros PAO para esta delegación y trimestre.")
+        st.info("No se registran auditorías del PAO para esta delegación en el periodo seleccionado.")
     else:
         fila = pao_f.iloc[0]
 
@@ -349,100 +387,89 @@ elif pagina == "PAO Estratégico":
         total_pao = numero(fila.get("TOTAL_PAO_100", 0))
         despliegue = numero(fila.get("DESPLIEGUE_10", 0))
         estado_pao = fila.get("ESTADO_AVANCE_PAO", "Sin estado")
-        estado_general = fila.get("ESTADO", "Sin estado")
 
         c1, c2, c3, c4 = st.columns(4)
-
-        c1.metric("Avance PAO", f"{avance:.1f}%")
-        c2.metric("Total PAO", f"{total_pao:.0f} / 100")
-        c3.metric("Despliegue", f"{despliegue:.1f} / 10")
-        c4.metric("Estado", estado_pao)
+        c1.metric("Avance PAO Acumulado", f"{avance:.1f}%")
+        c2.metric("Puntaje PAO Bruto", f"{total_pao:.0f} / 100")
+        c3.metric("Nivel Despliegue", f"{despliegue:.1f} / 10")
+        c4.metric("Estado Administrativo", estado_pao)
 
         st.markdown("---")
-
         col1, col2 = st.columns([1, 1])
 
         with col1:
-            st.subheader("Semáforo PAO")
-            st.plotly_chart(grafico_gauge(avance, "Avance PAO"), use_container_width=True)
+            st.subheader("Semáforo Técnico PAO")
+            st.plotly_chart(grafico_gauge(avance, "Progreso PAO"), use_container_width=True)
 
         with col2:
-            st.subheader("Componentes PAO")
-
+            st.subheader("Desglose Metodológico de Puntajes")
             componentes = {
                 "Validación DR": fila.get("INSTR_DR_5", 0),
                 "Validación Delegación": fila.get("INSTR_DELEG_5", 0),
-                "Recolección": fila.get("RECOLECCION_15", 0),
-                "MIC-MAC": fila.get("MICMAC_15", 0),
-                "Triángulo": fila.get("TRIANGULO_10", 0),
-                "Líneas": fila.get("LINEAS_25", 0),
-                "Informe": fila.get("INFORME_25", 0),
+                "Recolección Datos": fila.get("RECOLECCION_15", 0),
+                "Análisis MIC-MAC": fila.get("MICMAC_15", 0),
+                "Triángulo Violencia": fila.get("TRIANGULO_10", 0),
+                "Líneas de Acción": fila.get("LINEAS_25", 0),
+                "Informe Territorial": fila.get("INFORME_25", 0),
             }
 
             df_componentes = pd.DataFrame({
                 "Componente": list(componentes.keys()),
-                "Puntaje": [numero(v) for v in componentes.values()]
+                "Puntaje Asignado": [numero(v) for v in componentes.values()]
             })
-
-            st.plotly_chart(
-                grafico_barras(df_componentes, "Componente", "Puntaje"),
-                use_container_width=True
-            )
+            st.plotly_chart(grafico_barras(df_componentes, "Componente", "Puntaje Asignado"), use_container_width=True)
 
         st.markdown("---")
-
-        st.subheader("Estado de Componentes")
-
+        st.subheader("Estado Fino de Soportes Metodológicos")
         cols = st.columns(4)
 
         for i, row in df_componentes.iterrows():
             comp = row["Componente"]
-            puntaje = row["Puntaje"]
-
-            clase = "success-card" if puntaje > 0 else "danger-card"
-            estado_txt = "Consolidado" if puntaje > 0 else "Pendiente"
+            puntaje = row["Puntaje Asignado"]
+            clase_card = "success-card" if puntaje > 0 else "danger-card"
+            estado_txt = "Consolidado / Válido" if puntaje > 0 else "Pendiente de Procesar"
 
             with cols[i % 4]:
                 st.markdown(f"""
-                <div class="card {clase}">
+                <div class="card {clase_card}">
                     <b>{comp}</b><br>
                     <span class="small-text">{estado_txt}</span><br>
-                    <b>{puntaje}</b>
+                    <b>Puntos: {puntaje}</b>
                 </div>
                 """, unsafe_allow_html=True)
 
         st.markdown("---")
-
-        diagnostico = fila.get("DIAGNOSTICO_PAO", "Sin diagnóstico registrado.")
-        observaciones = fila.get("OBSERVACIONES", "Sin observaciones.")
+        diagnostico = fila.get("DIAGNOSTICO_PAO", "Sin diagnóstico registrado en la sábana.")
+        observaciones = fila.get("OBSERVACIONES", "Sin observaciones registradas.")
 
         st.markdown(f"""
         <div class="card info-card">
-            <h3>Diagnóstico PAO</h3>
+            <h3>Diagnóstico pericial del PAO</h3>
             <p>{diagnostico}</p>
         </div>
         """, unsafe_allow_html=True)
 
         st.markdown(f"""
         <div class="card warning-card">
-            <h3>Observaciones</h3>
+            <h3>Observaciones Técnicas de Fiscalización</h3>
             <p>{observaciones}</p>
         </div>
         """, unsafe_allow_html=True)
 
-        with st.expander("Ver datos PAO"):
+        with st.expander("Ver Matriz de Datos Originales PAO"):
             st.dataframe(pao_f, use_container_width=True)
 
+
 # =====================================================
-# ÓRDENES DE EJECUCIÓN
+# MÓDULO 3: ÓRDENES DE EJECUCIÓN (O.E.)
 # =====================================================
 
 elif pagina == "Órdenes de Ejecución":
 
-    st.header("Órdenes de Ejecución")
+    st.header("Cumplimiento de Órdenes de Ejecución (ORDOP-0022-2026)")
 
     if oe_f.empty:
-        st.info("Sin registros de OE para esta delegación y trimestre.")
+        st.info("La unidad seleccionada no registra datos de Órdenes de Ejecución en este trimestre.")
     else:
         fila = oe_f.iloc[0]
 
@@ -452,82 +479,73 @@ elif pagina == "Órdenes de Ejecución":
         validas = numero(fila.get("OE válidas", 0))
         parciales = numero(fila.get("OE con cumplimiento parcial", 0))
         sin_mal = numero(fila.get("OE sin planificación en MAL", 0))
+        pct_cumplimiento = convertir_porcentaje(fila.get("% cumplimiento", 0))
 
         c1, c2, c3, c4 = st.columns(4)
-
-        c1.metric("Total OE", int(total_oe))
-        c2.metric("Acciones ejecutadas", int(acciones))
-        c3.metric("OE con articulación", int(articulacion))
-        c4.metric("OE sin MAL", int(sin_mal))
-
-        st.markdown("---")
-
-        indicadores = pd.DataFrame({
-            "Indicador": [
-                "Total OE",
-                "Acciones ejecutadas",
-                "OE con articulación",
-                "OE válidas",
-                "OE parciales",
-                "OE sin MAL"
-            ],
-            "Valor": [
-                total_oe,
-                acciones,
-                articulacion,
-                validas,
-                parciales,
-                sin_mal
-            ]
-        })
-
-        st.plotly_chart(
-            grafico_barras(indicadores, "Indicador", "Valor"),
-            use_container_width=True
-        )
+        c1.metric("Volumen Total OE", int(total_oe))
+        c2.metric("Acciones en Campo", int(acciones))
+        c3.metric("OE con Articulación", int(articulacion))
+        c4.metric("OE Fuera de M.A.L.", int(sin_mal))
 
         st.markdown("---")
+        
+        col_graf_1, col_graf_2 = st.columns(2)
+        with col_graf_1:
+            st.subheader("Rendimiento de Gestión OE")
+            st.plotly_chart(grafico_gauge(pct_cumplimiento, "Cumplimiento OE"), use_container_width=True)
+            
+        with col_graf_2:
+            st.subheader("Distribución de Indicadores Operativos")
+            df_indicadores_oe = pd.DataFrame({
+                "Métrica Operativa": ["Total OE", "Acciones Ejecutadas", "Con Articulación", "Válidas", "Parciales", "Sin M.A.L."],
+                "Cantidad": [total_oe, acciones, articulacion, validas, parciales, sin_mal]
+            })
+            st.plotly_chart(grafico_barras(df_indicadores_oe, "Métrica Operativa", "Cantidad"), use_container_width=True)
 
-        informe = fila.get("Informe automático (justificación técnica operativa)", "Sin informe.")
-        sintesis = fila.get("Acciones y Resultados (síntesis de acciones)", "Sin síntesis.")
+        st.markdown("---")
+        
+        # Extracción segura salvando el espacio en blanco del final ("Validación Final ")
+        informe = fila.get("Informe automático (justificación técnica operativa)", "Sin informe registrado.")
+        sintesis = fila.get("Acciones y Resultados (síntesis de acciones)", "Sin detalle de acciones.")
         criterio = fila.get("Criterio Técnico (sustento técnico)", "Sin criterio técnico.")
-        validacion = fila.get("Validación Final", fila.get("Validación Final ", "Sin validación."))
+        validacion_final = fila.get("Validación Final", fila.get("Validación Final ", "Pendiente de Validar"))
 
         st.markdown(f"""
         <div class="card info-card">
-            <h3>Justificación Técnica</h3>
+            <h3>Justificación Técnica Automatizada</h3>
             <p>{informe}</p>
         </div>
         """, unsafe_allow_html=True)
 
         st.markdown(f"""
         <div class="card success-card">
-            <h3>Síntesis de Acciones</h3>
+            <h3>Síntesis de Acciones Operacionales y Resultados</h3>
             <p>{sintesis}</p>
         </div>
         """, unsafe_allow_html=True)
 
         st.markdown(f"""
         <div class="card warning-card">
-            <h3>Criterio Técnico</h3>
+            <h3>Criterio y Dictamen Técnico de la Dirección</h3>
             <p>{criterio}</p>
-            <p><b>Validación:</b> {validacion}</p>
+            <p><b>Estado de Validación de Evidencia:</b> {validacion_final}</p>
         </div>
         """, unsafe_allow_html=True)
 
-        with st.expander("Ver datos OE"):
+        with st.expander("Ver Matriz de Datos Originales OE"):
             st.dataframe(oe_f, use_container_width=True)
 
+
 # =====================================================
-# MESAS DE ARTICULACIÓN
+# MÓDULO 4: MESAS DE ARTICULACIÓN LOCAL (M.A.L.)
 # =====================================================
 
 elif pagina == "Mesas de Articulación":
 
-    st.header("Mesas de Articulación Local")
+    st.header("Módulo de Mesas de Articulación Local (M.A.L.)")
 
     if mesas_f.empty:
-        st.info("Sin registros de Mesas para esta delegación y trimestre.")
+        st.info("Sin evidencias o registros consolidados para esta Mesa de Articulación en el periodo.")
     else:
         fila = mesas_f.iloc[0]
 
@@ -535,126 +553,125 @@ elif pagina == "Mesas de Articulación":
         total_envios = numero(fila.get("Total Envíos", 0))
         trazabilidad = fila.get("Nivel de Trazabilidad", "Sin registro")
         fase = fila.get("Fase de Madurez Operativa", "Sin registro")
-        estado = fila.get("Estado de Gestión", "Sin estado")
+        estado_gestion = fila.get("Estado de Gestión", "Sin estado")
 
         c1, c2, c3, c4 = st.columns(4)
-
-        c1.metric("Cumplimiento", f"{cumplimiento:.1f}%")
-        c2.metric("Total envíos", int(total_envios))
-        c3.metric("Trazabilidad", trazabilidad)
-        c4.metric("Estado", estado)
+        c1.metric("Nota del Trimestre", f"{cumplimiento:.1f}%")
+        c2.metric("Formularios Transmitidos", int(total_envios))
+        c3.metric("Alineamiento Territorial", trazabilidad)
+        c4.metric("Estado de la Mesa", estado_gestion)
 
         st.markdown("---")
-
-        col1, col2 = st.columns([1, 1])
+        col1, col2 = st.columns(2)
 
         with col1:
-            st.subheader("Cumplimiento Integral MAL")
-            st.plotly_chart(grafico_gauge(cumplimiento, "Cumplimiento MAL"), use_container_width=True)
+            st.subheader("Calibración Integral de la Mesa")
+            st.plotly_chart(grafico_gauge(cumplimiento, "Índice de Madurez"), use_container_width=True)
 
         with col2:
-            st.subheader("Estado Operativo")
+            st.subheader("Ciclo de Despliegue en Territorio")
             st.markdown(f"""
             <div class="card info-card">
                 <h3>{fase}</h3>
-                <p><b>Nivel de trazabilidad:</b> {trazabilidad}</p>
-                <p><b>Estado:</b> {estado}</p>
+                <p><b>Nivel de Trazabilidad ORDOP-0022:</b> {trazabilidad}</p>
+                <p><b>Condición Actual de Auditoría:</b> {estado_gestion}</p>
             </div>
             """, unsafe_allow_html=True)
 
-        justificacion = fila.get("Justificación Técnica Operativa", "Sin justificación registrada.")
-        gobernanza = fila.get("Índice Gobernanza Local", "Sin registro")
-        minuta = fila.get("Minuta", "Sin registro")
-        asistencia = fila.get("Asistencia", "Sin registro")
+        justificacion = fila.get("Justificación Técnica Operativa", "Sin redacción registrada.")
+        gobernanza = fila.get("Índice Gobernanza Local", "Sin datos")
+        minuta = fila.get("Minuta", "No")
+        asistencia = fila.get("Asistencia", "No")
 
         st.markdown("---")
-
         st.markdown(f"""
         <div class="card warning-card">
-            <h3>Lectura Técnica MAL</h3>
-            <p><b>Gobernanza local:</b> {gobernanza}</p>
-            <p><b>Minuta:</b> {minuta} | <b>Asistencia:</b> {asistencia}</p>
+            <h3>Dictamen Pericial de Articulación Colectiva</h3>
+            <p><b>Gobernanza e Impacto de Actores:</b> {gobernanza}</p>
+            <p><b>Cumplimiento Formal:</b> Acta/Minuta Levantada: <b>{minuta}</b> | Control de Firmas Asistencia: <b>{asistencia}</b></p>
+            <hr style="border-color:#374151;">
             <p>{justificacion}</p>
         </div>
         """, unsafe_allow_html=True)
 
-        with st.expander("Ver datos MAL"):
+        with st.expander("Ver Matriz de Datos Originales M.A.L."):
             st.dataframe(mesas_f, use_container_width=True)
 
+
 # =====================================================
-# CONSOLIDADO REGIONAL
+# MÓDULO 5: CONSOLIDADO REGIONAL (VISTA DE COMPARATIVAS)
 # =====================================================
 
 elif pagina == "Consolidado Regional":
 
-    st.header("Consolidado Regional")
+    st.header(f"Diagnóstico Comparativo de Mandos — {region}")
 
     c1, c2, c3 = st.columns(3)
-
-    c1.metric("Registros MAL Región", len(mesas_region))
-    c2.metric("Registros OE Región", len(oe_region))
-    c3.metric("Registros PAO Región", len(pao_region))
+    c1.metric("Registros M.A.L. en la Región", len(mesas_region))
+    c2.metric("Órdenes de Ejecución Regionales", len(oe_region))
+    c3.metric("Hojas de Ruta PAO Validadas", len(pao_region))
 
     st.markdown("---")
 
-    delegaciones_region = sorted(
-        control[control["Delegación Regional"] == region]["Delegación Policial"]
-        .dropna()
-        .unique()
-    )
+    # Extrae el mapa completo de unidades de la región actual
+    mask_cantones = control["Delegación Regional"].apply(normalizar_texto) == normalizar_texto(region)
+    cantones_region = sorted(control[mask_cantones]["Delegación Policial"].dropna().unique())
 
-    resumen = []
+    datos_resumen_regional = []
 
-    for d in delegaciones_region:
-        mal_d = mesas_region[mesas_region["Delegación Policial"] == d]
-        oe_d = oe_region[oe_region["Delegación Policial"] == d]
-        pao_d = pao_region[pao_region["Delegación Policial"] == d]
+    for c in cantones_region:
+        # Filtra cada componente por unidad policial para armar la tabla cruzada de la región
+        df_mal_c = mesas_region[mesas_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)]
+        df_oe_c = oe_region[oe_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)]
+        df_pao_c = pao_region[pao_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)]
 
-        avance = 0
-        if not pao_d.empty and "AVANCE_PAO_%" in pao_d.columns:
-            avance = convertir_porcentaje(pao_d["AVANCE_PAO_%"].iloc[0])
+        pct_avance_pao_regional = 0.0
+        if not df_pao_c.empty and "AVANCE_PAO_%" in df_pao_c.columns:
+            pct_avance_pao_regional = convertir_porcentaje(df_pao_c["AVANCE_PAO_%"].iloc[0])
 
-        resumen.append({
-            "Delegación Policial": d,
-            "MAL": len(mal_d),
-            "OE": len(oe_d),
-            "PAO": len(pao_d),
-            "Avance PAO": avance
+        datos_resumen_regional.append({
+            "Delegación Policial": c,
+            "Envíos M.A.L.": len(df_mal_c),
+            "Volumen O.E.": len(df_oe_c),
+            "Auditorías PAO": len(df_pao_c),
+            "Eficiencia PAO %": pct_avance_pao_regional
         })
 
-    resumen = pd.DataFrame(resumen)
+    df_resumen_regional = pd.DataFrame(datos_resumen_regional)
 
-    st.subheader("Comparativo Delegacional")
-
-    fig = px.bar(
-        resumen,
+    st.subheader("Gráfico de Eficiencia del Despliegue del PAO por Comandancia")
+    fig_regional_pao = px.bar(
+        df_resumen_regional,
         x="Delegación Policial",
-        y="Avance PAO",
-        text="Avance PAO"
+        y="Eficiencia PAO %",
+        text="Eficiencia PAO %"
     )
-    fig.update_layout(
+    fig_regional_pao.update_layout(
         paper_bgcolor="#111827",
         plot_bgcolor="#111827",
         font_color="white",
         xaxis_tickangle=-45
     )
-    st.plotly_chart(fig, use_container_width=True)
+    fig_regional_pao.update_traces(marker_color='#10B981', texttemplate='%{text:.1f}%', textposition='outside')
+    st.plotly_chart(fig_regional_pao, use_container_width=True)
 
-    st.subheader("Disponibilidad de Información por Componente")
+    st.markdown("---")
 
-    fig2 = px.bar(
-        resumen,
+    st.subheader("Volumen de Actividad Transmitida por Unidad Policial")
+    fig_regional_actividad = px.bar(
+        df_resumen_regional,
         x="Delegación Policial",
-        y=["MAL", "OE", "PAO"],
-        barmode="group"
+        y=["Envíos M.A.L.", "Volumen O.E.", "Auditorías PAO"],
+        barmode="group",
+        labels={"value": "Cantidad de Registros", "variable": "Componente ESTRATEGIA"}
     )
-    fig2.update_layout(
+    fig_regional_actividad.update_layout(
         paper_bgcolor="#111827",
         plot_bgcolor="#111827",
         font_color="white",
         xaxis_tickangle=-45
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig_regional_actividad, use_container_width=True)
 
-    with st.expander("Ver tabla regional"):
-        st.dataframe(resumen, use_container_width=True)
+    with st.expander("Ver Matriz de Datos del Consolidado Regional de Comandancias"):
+        st.dataframe(df_resumen_regional, use_container_width=True)
