@@ -5,7 +5,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
-import io
+from datetime import datetime
+import re
+import html
 
 # =====================================================
 # CONFIGURACIÓN GENERAL DE LA APP
@@ -98,13 +100,12 @@ def cargar_hoja(sheet_url, nombre_hoja):
 
 
 def normalizar_texto(texto):
-    return (str(texto).lower().strip()
-            .replace('á', 'a')
-            .replace('é', 'e')
-            .replace('í', 'i')
-            .replace('ó', 'o')
-            .replace('ú', 'u')
-            .replace(r'[\r\n]+', ''))
+    texto = str(texto).lower().strip()
+    texto = texto.replace("á", "a").replace("é", "e").replace("í", "i")
+    texto = texto.replace("ó", "o").replace("ú", "u").replace("ñ", "n")
+    texto = re.sub(r"[\r\n]+", " ", texto)
+    texto = re.sub(r"\s+", " ", texto)
+    return texto.strip()
 
 
 def limpiar_df(df):
@@ -115,8 +116,12 @@ def limpiar_df(df):
 
 def numero(valor):
     try:
+        if valor is None:
+            return 0.0
         if isinstance(valor, str):
-            valor = valor.replace('%', '').strip()
+            valor = valor.replace("%", "").replace(",", ".").strip()
+            if valor == "":
+                return 0.0
         return float(valor)
     except Exception:
         return 0.0
@@ -124,14 +129,31 @@ def numero(valor):
 
 def convertir_porcentaje(valor):
     valor = numero(valor)
-    if valor <= 1.0 and valor > 0.0:
+    if 0.0 < valor <= 1.0:
         return valor * 100.0
     return valor
+
+
+def texto_seguro_html(valor):
+    return html.escape(str(valor)) if valor is not None else ""
+
+
+def obtener_valor(row, claves, defecto=""):
+    if not row:
+        return defecto
+    if isinstance(claves, str):
+        claves = [claves]
+    for clave in claves:
+        if clave in row and str(row.get(clave, "")).strip() != "":
+            return row.get(clave)
+    return defecto
 
 
 def filtrar(df, delegacion, trimestre):
     if df.empty:
         return df
+    if "Delegación Policial" not in df.columns or "Trimestre" not in df.columns:
+        return pd.DataFrame()
     mask_delegacion = df["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)
     mask_trimestre = df["Trimestre"].apply(normalizar_texto) == normalizar_texto(trimestre)
     return df[mask_delegacion & mask_trimestre]
@@ -140,13 +162,25 @@ def filtrar(df, delegacion, trimestre):
 def filtrar_region(df, region, trimestre):
     if df.empty:
         return df
+    if "Delegación Regional" not in df.columns or "Trimestre" not in df.columns:
+        return pd.DataFrame()
     mask_region = df["Delegación Regional"].apply(normalizar_texto) == normalizar_texto(region)
     mask_trimestre = df["Trimestre"].apply(normalizar_texto) == normalizar_texto(trimestre)
     return df[mask_region & mask_trimestre]
 
 
+def fecha_actual_cr():
+    meses = {
+        1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
+        5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
+        9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
+    }
+    hoy = datetime.now()
+    return f"{hoy.day:02d} de {meses[hoy.month]} de {hoy.year}"
+
+
 # =====================================================
-# GENERADOR NATIVO DE PDF CON REEMPLAZO SEGURO
+# GENERADOR NATIVO DE PDF
 # =====================================================
 
 class ReporteSIGESS(FPDF):
@@ -155,12 +189,15 @@ class ReporteSIGESS(FPDF):
             self.image("logo_sigess.png", 160, 12, 38)
         except Exception:
             pass
+
         self.set_font("Helvetica", "B", 13)
         self.set_text_color(30, 58, 138)
         self.text(15, 18, "MINISTERIO DE SEGURIDAD PÚBLICA")
+
         self.set_font("Helvetica", "", 10)
         self.set_text_color(75, 85, 99)
-        self.text(15, 23, "Estrategia Sembremos Seguridad — SIGESS 2026")
+        self.text(15, 23, sanitizar_para_pdf("Estrategia Sembremos Seguridad - SIGESS 2026"))
+
         self.set_draw_color(30, 58, 138)
         self.line(15, 27, 195, 27)
         self.ln(22)
@@ -173,340 +210,273 @@ class ReporteSIGESS(FPDF):
 
 
 def sanitizar_para_pdf(texto):
-    if not texto:
+    if texto is None:
         return ""
-    # Evita caídas sustituyendo caracteres raros o de macros por equivalentes latin-1 legibles
-    string_limpia = str(texto).encode('latin-1', 'replace').decode('latin-1')
-    return string_limpia
+    texto = str(texto)
+    reemplazos = {
+        "—": "-",
+        "–": "-",
+        "“": '"',
+        "”": '"',
+        "‘": "'",
+        "’": "'",
+        "•": "-",
+        "…": "...",
+        "\u00a0": " "
+    }
+    for original, nuevo in reemplazos.items():
+        texto = texto.replace(original, nuevo)
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto.encode("latin-1", "replace").decode("latin-1")
+
+
+def salida_pdf_bytes(pdf):
+    salida = pdf.output(dest="S")
+    if isinstance(salida, str):
+        return salida.encode("latin-1", "replace")
+    return bytes(salida)
+
+
+def agregar_titulo_seccion(pdf, titulo):
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(31, 41, 55)
+    pdf.set_fill_color(243, 244, 246)
+    pdf.cell(0, 7, sanitizar_para_pdf(titulo), 0, 1, "L", True)
+    pdf.ln(2)
+
+
+def agregar_caja_texto(pdf, titulo, texto, borde=1):
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_text_color(31, 41, 55)
+    pdf.cell(0, 5, sanitizar_para_pdf(titulo), 0, 1)
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(31, 41, 55)
+    contenido = sanitizar_para_pdf(texto if texto else "Sin datos registrados.")
+    pdf.multi_cell(0, 5, contenido, borde)
+    pdf.ln(3)
+
+
+def generar_alertas_oe(r_oe):
+    if not r_oe:
+        return ["Sin datos de Órdenes de Ejecución para generar alertas."]
+
+    sin_mal = numero(obtener_valor(r_oe, "OE sin planificación en MAL", 0))
+    no_validas = numero(obtener_valor(r_oe, "OE no válidas", 0))
+
+    criterio = obtener_valor(r_oe, "Criterio Técnico (sustento técnico)", "")
+    evidencia = obtener_valor(r_oe, "Observaciones de Evidencia", "")
+    validacion_final = obtener_valor(r_oe, ["Validación Final", "Validación Final "], "")
+
+    texto_alerta = normalizar_texto(f"{criterio} {evidencia} {validacion_final}")
+
+    alertas = []
+
+    if "no se planifica" in texto_alerta or sin_mal > 0:
+        alertas.append("Riesgo de planificación: existen OE sin planificación en Mesa de Articulación Local.")
+
+    if "no hay coherencia" in texto_alerta:
+        alertas.append("Riesgo de coherencia: se identifican diferencias entre planificación y ejecución.")
+
+    if "no se observa evidencia" in texto_alerta or "sin evidencia" in texto_alerta:
+        alertas.append("Riesgo documental: se identifican debilidades en la evidencia aportada.")
+
+    if "no corresponden" in texto_alerta:
+        alertas.append("Riesgo técnico: las acciones no corresponden plenamente a la problemática definida.")
+
+    if no_validas > 0:
+        alertas.append("Riesgo de validez: existen Órdenes de Ejecución clasificadas como no válidas.")
+
+    if not alertas:
+        alertas.append("No se identifican alertas críticas automáticas en el registro evaluado.")
+
+    return alertas
 
 
 def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf = ReporteSIGESS()
-    pdf.add_page()
     pdf.set_margins(15, 15, 15)
-    
-    val_pao = convertir_porcentaje(r_pao.get("AVANCE_PAO_%", 0)) if r_pao else 0.0
-    val_mal = convertir_porcentaje(r_mesas.get("% Cumplimiento Integral", 0)) if r_mesas else 0.0
-    val_oe = int(numero(r_oe.get("Total OE", 0))) if r_oe else 0
-    val_cumplimiento_oe = convertir_porcentaje(
-    r_oe.get("% cumplimiento ajustado", 0)
-) if r_oe else 0.0
+    pdf.set_auto_page_break(auto=True, margin=18)
+    pdf.add_page()
+
+    # Valores generales
+    val_pao = convertir_porcentaje(obtener_valor(r_pao, "AVANCE_PAO_%", 0)) if r_pao else 0.0
+    val_mal = convertir_porcentaje(obtener_valor(r_mesas, "% Cumplimiento Integral", 0)) if r_mesas else 0.0
+    val_oe = int(numero(obtener_valor(r_oe, "Total OE", 0))) if r_oe else 0
+
+    cumplimiento_transitorio = convertir_porcentaje(
+        obtener_valor(r_oe, "% cumplimiento ajustado", 0)
+    ) if r_oe else 0.0
 
     # Metadatos
     pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(40, 6, "Delegación Regional:", 0, 0)
+    pdf.set_text_color(31, 41, 55)
+    pdf.cell(40, 6, sanitizar_para_pdf("Delegación Regional:"), 0, 0)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(60, 6, sanitizar_para_pdf(region), 0, 0)
+
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(35, 6, "Fecha Reporte:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(45, 6, "17/05/2026", 0, 1)
+    pdf.cell(45, 6, sanitizar_para_pdf(fecha_actual_cr()), 0, 1)
 
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(40, 6, "Unidad Cantonal:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(60, 6, sanitizar_para_pdf(delegacion), 0, 0)
+
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(35, 6, "Corte Evaluado:", 0, 0)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(45, 6, sanitizar_para_pdf(trimestre), 0, 1)
     pdf.ln(5)
 
-    # Bloque 1: Notas
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.set_fill_color(243, 244, 246)
-    pdf.cell(0, 7, " 1. RESUMEN EJECUTIVO DE RENDIMIENTO", 0, 1, "L", True)
-    pdf.ln(3)
+    # Resumen ejecutivo
+    agregar_titulo_seccion(pdf, "1. RESUMEN EJECUTIVO DE RENDIMIENTO")
 
-    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_font("Helvetica", "B", 9)
     pdf.set_fill_color(15, 23, 42)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(60, 7, "Cumplimiento M.A.L.", 1, 0, "C", True)
-    pdf.cell(60, 7, "Eficiencia Real PAO", 1, 0, "C", True)
-    pdf.cell(60, 7, "Volumen de Órdenes (OE)", 1, 1, "C", True)
+    pdf.cell(47, 7, "Cumplimiento M.A.L.", 1, 0, "C", True)
+    pdf.cell(47, 7, "Eficiencia PAO", 1, 0, "C", True)
+    pdf.cell(47, 7, "Volumen OE", 1, 0, "C", True)
+    pdf.cell(49, 7, "Cumplimiento Transitorio", 1, 1, "C", True)
 
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.set_text_color(30, 58, 138)
-    pdf.cell(60, 10, f"{val_mal:.1f}%", 1, 0, "C")
-    pdf.set_text_color(22, 197, 94)
-    pdf.cell(60, 10, f"{val_pao:.1f}%", 1, 0, "C")
+    pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(31, 41, 55)
-    pdf.cell(60, 10, f"{val_oe} OE", 1, 1, "C")
-    pdf.ln(5)
+    pdf.cell(47, 9, f"{val_mal:.1f}%", 1, 0, "C")
+    pdf.cell(47, 9, f"{val_pao:.1f}%", 1, 0, "C")
+    pdf.cell(47, 9, f"{val_oe} OE", 1, 0, "C")
+    pdf.cell(49, 9, f"{cumplimiento_transitorio:.1f}%", 1, 1, "C")
+    pdf.ln(4)
 
-    # Bloque 2: MESAS
-    pdf.set_font("Helvetica", "B", 11)
+    # Mesas
+    agregar_titulo_seccion(pdf, "2. EVALUACIÓN DE MESAS DE ARTICULACIÓN LOCAL (M.A.L.)")
+    just_mal = obtener_valor(
+        r_mesas,
+        "Justificación Técnica Operativa",
+        "Sin registro de justificación técnica."
+    ) if r_mesas else "Sin datos."
+    agregar_caja_texto(pdf, "Dictamen de trazabilidad, madurez y gobernanza:", just_mal)
+
+    # Órdenes de Ejecución
+    agregar_titulo_seccion(pdf, "3. CENTRO DE FISCALIZACIÓN DE ÓRDENES DE EJECUCIÓN")
+
+    total_oe = int(numero(obtener_valor(r_oe, "Total OE", 0))) if r_oe else 0
+    acciones = int(numero(obtener_valor(r_oe, "Total acciones ejecutadas", 0))) if r_oe else 0
+    articulacion = int(numero(obtener_valor(r_oe, "OE con articulación", 0))) if r_oe else 0
+    oe_validas = int(numero(obtener_valor(r_oe, "OE válidas", 0))) if r_oe else 0
+    parciales = int(numero(obtener_valor(r_oe, "OE con cumplimiento parcial", 0))) if r_oe else 0
+    no_validas = int(numero(obtener_valor(r_oe, "OE no válidas", 0))) if r_oe else 0
+    sin_mal = int(numero(obtener_valor(r_oe, "OE sin planificación en MAL", 0))) if r_oe else 0
+    oportunidad = int(numero(obtener_valor(r_oe, "OE en oportunidad de mejora", 0))) if r_oe else 0
+    ajustadas = int(numero(obtener_valor(r_oe, "OE ajustadas por contexto trimestral", 0))) if r_oe else 0
+
+    estado = obtener_valor(r_oe, "Estado", "Sin estado") if r_oe else "Sin datos"
+
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_fill_color(15, 23, 42)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(65, 7, "Indicador", 1, 0, "C", True)
+    pdf.cell(35, 7, "Resultado", 1, 0, "C", True)
+    pdf.cell(90, 7, "Observación", 1, 1, "C", True)
+
+    pdf.set_font("Helvetica", "", 8.5)
     pdf.set_text_color(31, 41, 55)
-    pdf.set_fill_color(243, 244, 246)
-    pdf.cell(0, 7, " 2. EVALUACIÓN DE MESAS DE ARTICULACIÓN LOCAL (M.A.L.)", 0, 1, "L", True)
-    pdf.ln(2)
-    
-    pdf.set_font("Helvetica", "B", 9.5)
-    pdf.cell(0, 5, "Dictamen de Trazabilidad, Madurez y Gobernanza:", 0, 1)
-    pdf.set_font("Helvetica", "", 9.5)
-    just_mal = r_mesas.get("Justificación Técnica Operativa", "Sin registro de justificación técnica.") if r_mesas else "Sin datos."
-    pdf.multi_cell(0, 5, sanitizar_para_pdf(just_mal), 1)
-    pdf.ln(5)
 
-   # =====================================================
-# BLOQUE 3 — ÓRDENES DE EJECUCIÓN
-# =====================================================
-
-pdf.set_fill_color(243, 244, 246)
-pdf.set_font("Helvetica", "B", 11)
-pdf.set_text_color(31, 41, 55)
-
-pdf.cell(
-    0,
-    7,
-    " 3. CENTRO DE FISCALIZACIÓN DE ÓRDENES DE EJECUCIÓN",
-    0,
-    1,
-    "L",
-    True
-)
-
-pdf.ln(3)
-
-# =====================================================
-# RESUMEN CUANTITATIVO
-# =====================================================
-
-total_oe = int(numero(r_oe.get("Total OE", 0))) if r_oe else 0
-acciones = int(numero(r_oe.get("Total acciones ejecutadas", 0))) if r_oe else 0
-articulacion = int(numero(r_oe.get("OE con articulación", 0))) if r_oe else 0
-parciales = int(numero(r_oe.get("OE con cumplimiento parcial", 0))) if r_oe else 0
-no_validas = int(numero(r_oe.get("OE no válidas", 0))) if r_oe else 0
-sin_mal = int(numero(r_oe.get("OE sin planificación en MAL", 0))) if r_oe else 0
-
-cumplimiento_transitorio = convertir_porcentaje(
-    r_oe.get("% cumplimiento ajustado", 0)
-) if r_oe else 0.0
-
-estado = r_oe.get("Estado", "Sin estado") if r_oe else "Sin datos"
-
-pdf.set_font("Helvetica", "B", 10)
-pdf.set_fill_color(15, 23, 42)
-pdf.set_text_color(255, 255, 255)
-
-pdf.cell(60, 7, "Indicador", 1, 0, "C", True)
-pdf.cell(40, 7, "Resultado", 1, 0, "C", True)
-pdf.cell(90, 7, "Observación", 1, 1, "C", True)
-
-pdf.set_text_color(31, 41, 55)
-pdf.set_font("Helvetica", "", 9)
-
-datos_oe = [
-    ["Total OE", str(total_oe), "Órdenes de Ejecución registradas."],
-    ["Acciones Ejecutadas", str(acciones), "Acciones operativas desarrolladas."],
-    ["OE con Articulación", str(articulacion), "Corresponsabilidad interinstitucional registrada."],
-    ["OE Parciales", str(parciales), "Cumplimiento parcial bajo criterio transitorio."],
-    ["OE No Válidas", str(no_validas), "No alcanzan validez técnica."],
-    ["OE sin M.A.L.", str(sin_mal), "Sin planificación en Mesa de Articulación Local."],
-    [
-        "Cumplimiento Parcial Transitorio",
-        f"{cumplimiento_transitorio:.1f}%",
-        "Aplicación transitoria I Trimestre ORDOP-0022-2026."
+    datos_oe = [
+        ("Total OE", str(total_oe), "Órdenes de Ejecución registradas."),
+        ("Acciones ejecutadas", str(acciones), "Acciones operativas desarrolladas."),
+        ("OE con articulación", str(articulacion), "Corresponsabilidad interinstitucional."),
+        ("OE válidas", str(oe_validas), "Registros con validez técnica."),
+        ("OE parciales", str(parciales), "Cumplimiento parcial bajo criterio transitorio."),
+        ("OE no válidas", str(no_validas), "Registros sin validez técnica."),
+        ("OE sin M.A.L.", str(sin_mal), "Sin planificación en Mesa de Articulación Local."),
+        ("OE oportunidad mejora", str(oportunidad), "Registros en oportunidad de mejora."),
+        ("OE ajustadas", str(ajustadas), "Ajustes por contexto trimestral."),
+        ("Cumplimiento parcial transitorio", f"{cumplimiento_transitorio:.1f}%", "No utiliza % cumplimiento OE por criterio transitorio."),
+        ("Estado", estado, "Resultado general del periodo evaluado.")
     ]
-]
 
-for fila in datos_oe:
-    pdf.cell(60, 7, sanitizar_para_pdf(fila[0]), 1)
-    pdf.cell(40, 7, sanitizar_para_pdf(fila[1]), 1, 0, "C")
-    pdf.cell(90, 7, sanitizar_para_pdf(fila[2]), 1, 1)
+    for indicador, resultado, observacion in datos_oe:
+        pdf.cell(65, 6, sanitizar_para_pdf(indicador), 1)
+        pdf.cell(35, 6, sanitizar_para_pdf(resultado), 1, 0, "C")
+        pdf.cell(90, 6, sanitizar_para_pdf(observacion), 1, 1)
 
-pdf.ln(5)
+    pdf.ln(4)
 
-# =====================================================
-# DICTAMEN OPERATIVO
-# =====================================================
+    informe_oe = obtener_valor(
+        r_oe,
+        "Informe automático (justificación técnica operativa)",
+        "Sin informe operativo."
+    ) if r_oe else "Sin datos."
+    agregar_caja_texto(pdf, "Dictamen operativo y análisis técnico:", informe_oe)
 
-pdf.set_font("Helvetica", "B", 10)
-pdf.cell(0, 6, "DICTAMEN OPERATIVO Y VALIDACIÓN TÉCNICA", 0, 1)
+    validacion_final = obtener_valor(
+        r_oe,
+        ["Validación Final", "Validación Final "],
+        "Pendiente de dictamen."
+    ) if r_oe else "Sin datos."
+    agregar_caja_texto(pdf, "Validación general:", validacion_final)
 
-pdf.set_font("Helvetica", "", 9.5)
+    instituciones = obtener_valor(
+        r_oe,
+        "Instituciones Participantes (Corresponsabilidad (articulación)",
+        "Sin instituciones registradas."
+    ) if r_oe else "Sin datos."
 
-informe_oe = r_oe.get(
-    "Informe automático (justificación técnica operativa)",
-    "Sin informe operativo."
-) if r_oe else "Sin datos."
+    problematicas = obtener_valor(
+        r_oe,
+        "Problemáticas y Factores",
+        "Sin problemáticas registradas."
+    ) if r_oe else "Sin datos."
 
-pdf.multi_cell(
-    0,
-    5,
-    sanitizar_para_pdf(informe_oe),
-    1
-)
+    enfoque = obtener_valor(
+        r_oe,
+        "Enfoque de la OE",
+        "Sin enfoque registrado."
+    ) if r_oe else "Sin datos."
 
-pdf.ln(4)
-
-pdf.set_font("Helvetica", "B", 10)
-pdf.cell(0, 6, "VALIDACIÓN GENERAL", 0, 1)
-
-pdf.set_font("Helvetica", "", 9.5)
-
-validacion_final = r_oe.get(
-    "Validación Final",
-    r_oe.get("Validación Final ", "Pendiente")
-) if r_oe else "Sin datos."
-
-pdf.multi_cell(
-    0,
-    5,
-    sanitizar_para_pdf(validacion_final),
-    1
-)
-
-pdf.ln(4)
-
-# =====================================================
-# FACTORES CUALITATIVOS
-# =====================================================
-
-instituciones = r_oe.get(
-    "Instituciones Participantes (Corresponsabilidad (articulación)",
-    "Sin instituciones registradas."
-) if r_oe else "Sin datos."
-
-problematicas = r_oe.get(
-    "Problemáticas y Factores",
-    "Sin problemáticas registradas."
-) if r_oe else "Sin datos."
-
-enfoque = r_oe.get(
-    "Enfoque de la OE",
-    "Sin enfoque registrado."
-) if r_oe else "Sin datos."
-
-acciones_resultados = r_oe.get(
-    "Acciones y Resultados (síntesis de acciones) ",
-    r_oe.get(
-        "Acciones y Resultados (síntesis de acciones)",
+    acciones_resultados = obtener_valor(
+        r_oe,
+        ["Acciones y Resultados (síntesis de acciones) ", "Acciones y Resultados (síntesis de acciones)"],
         "Sin acciones registradas."
-    )
-) if r_oe else "Sin datos."
+    ) if r_oe else "Sin datos."
 
-pdf.set_font("Helvetica", "B", 10)
-pdf.cell(0, 6, "CORRESPONSABILIDAD Y ARTICULACIÓN", 0, 1)
+    evidencia = obtener_valor(
+        r_oe,
+        "Observaciones de Evidencia",
+        "Sin observaciones registradas."
+    ) if r_oe else "Sin datos."
 
-pdf.set_font("Helvetica", "", 9)
-pdf.multi_cell(0, 5, sanitizar_para_pdf(instituciones), 1)
+    criterio = obtener_valor(
+        r_oe,
+        "Criterio Técnico (sustento técnico)",
+        "Sin criterio técnico registrado."
+    ) if r_oe else "Sin datos."
 
-pdf.ln(3)
+    agregar_caja_texto(pdf, "Corresponsabilidad y articulación:", instituciones)
+    agregar_caja_texto(pdf, "Factores de riesgo y problemáticas:", problematicas)
+    agregar_caja_texto(pdf, "Enfoque aplicado a la OE:", enfoque)
+    agregar_caja_texto(pdf, "Acciones y resultados operativos:", acciones_resultados)
+    agregar_caja_texto(pdf, "Observaciones de evidencia:", evidencia)
+    agregar_caja_texto(pdf, "Criterio técnico operativo:", criterio)
 
-pdf.set_font("Helvetica", "B", 10)
-pdf.cell(0, 6, "FACTORES DE RIESGO Y PROBLEMÁTICAS", 0, 1)
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_text_color(31, 41, 55)
+    pdf.cell(0, 6, "Alertas operativas automáticas:", 0, 1)
 
-pdf.set_font("Helvetica", "", 9)
-pdf.multi_cell(0, 5, sanitizar_para_pdf(problematicas), 1)
+    pdf.set_font("Helvetica", "", 9)
+    for alerta in generar_alertas_oe(r_oe):
+        pdf.multi_cell(0, 5, sanitizar_para_pdf(f"- {alerta}"), 1)
 
-pdf.ln(3)
-
-pdf.set_font("Helvetica", "B", 10)
-pdf.cell(0, 6, "ENFOQUE APLICADO", 0, 1)
-
-pdf.set_font("Helvetica", "", 9)
-pdf.multi_cell(0, 5, sanitizar_para_pdf(enfoque), 1)
-
-pdf.ln(3)
-
-pdf.set_font("Helvetica", "B", 10)
-pdf.cell(0, 6, "ACCIONES Y RESULTADOS OPERATIVOS", 0, 1)
-
-pdf.set_font("Helvetica", "", 9)
-pdf.multi_cell(0, 5, sanitizar_para_pdf(acciones_resultados), 1)
-
-pdf.ln(4)
-
-# =====================================================
-# EVIDENCIA Y CRITERIO
-# =====================================================
-
-evidencia = r_oe.get(
-    "Observaciones de Evidencia",
-    "Sin observaciones registradas."
-) if r_oe else "Sin datos."
-
-criterio = r_oe.get(
-    "Criterio Técnico (sustento técnico)",
-    "Sin criterio técnico."
-) if r_oe else "Sin datos."
-
-pdf.set_font("Helvetica", "B", 10)
-pdf.cell(0, 6, "OBSERVACIONES DE EVIDENCIA", 0, 1)
-
-pdf.set_font("Helvetica", "", 9)
-pdf.multi_cell(0, 5, sanitizar_para_pdf(evidencia), 1)
-
-pdf.ln(3)
-
-pdf.set_font("Helvetica", "B", 10)
-pdf.cell(0, 6, "CRITERIO TÉCNICO OPERATIVO", 0, 1)
-
-pdf.set_font("Helvetica", "", 9)
-pdf.multi_cell(0, 5, sanitizar_para_pdf(criterio), 1)
-
-pdf.ln(4)
-
-# =====================================================
-# ALERTAS AUTOMÁTICAS
-# =====================================================
-
-pdf.set_font("Helvetica", "B", 10)
-pdf.cell(0, 6, "ALERTAS OPERATIVAS AUTOMÁTICAS", 0, 1)
-
-texto_alerta = f"{criterio} {evidencia} {validacion_final}".lower()
-
-alertas = []
-
-if "no se planifica" in texto_alerta or sin_mal > 0:
-    alertas.append(
-        "Riesgo de planificación: existen OE sin planificación en Mesa de Articulación Local."
-    )
-
-if "no hay coherencia" in texto_alerta:
-    alertas.append(
-        "Riesgo de coherencia entre planificación y ejecución."
-    )
-
-if "no se observa evidencia" in texto_alerta:
-    alertas.append(
-        "Debilidad documental: evidencia insuficiente."
-    )
-
-if "no corresponden" in texto_alerta:
-    alertas.append(
-        "Las acciones ejecutadas no corresponden plenamente a la problemática priorizada."
-    )
-
-if no_validas > 0:
-    alertas.append(
-        "Existen Órdenes de Ejecución clasificadas como no válidas."
-    )
-
-pdf.set_font("Helvetica", "", 9)
-
-if not alertas:
-    pdf.multi_cell(
-        0,
-        5,
-        "No se identifican alertas críticas automáticas.",
-        1
-    )
-else:
-    for alerta in alertas:
-        pdf.multi_cell(
-            0,
-            5,
-            sanitizar_para_pdf(f"- {alerta}"),
-            1
-        )
-    
-    pdf.ln(10)
+    pdf.ln(6)
     pdf.set_font("Helvetica", "I", 8.5)
-    pdf.cell(0, 4, "Coordinación Nacional Sembremos Seguridad — Fuerza Pública de Costa Rica.", 0, 1, "C")
-    
-    return pdf.output()
+    pdf.set_text_color(75, 85, 99)
+    pdf.cell(0, 4, sanitizar_para_pdf("Coordinación Nacional Sembremos Seguridad - Fuerza Pública de Costa Rica."), 0, 1, "C")
+
+    return salida_pdf_bytes(pdf)
 
 
 # =====================================================
@@ -515,6 +485,7 @@ else:
 
 def grafico_gauge(valor, titulo):
     valor = convertir_porcentaje(valor)
+
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=valor,
@@ -529,9 +500,12 @@ def grafico_gauge(valor, titulo):
             ]
         }
     ))
+
     fig.update_layout(
-        paper_bgcolor="#111827", font_color="white",
-        height=240, margin=dict(l=30, r=30, t=50, b=20)
+        paper_bgcolor="#111827",
+        font_color="white",
+        height=240,
+        margin=dict(l=30, r=30, t=50, b=20)
     )
     return fig
 
@@ -539,36 +513,46 @@ def grafico_gauge(valor, titulo):
 def grafico_barras(df, x, y, titulo=""):
     fig = px.bar(df, x=x, y=y, text=y, title=titulo)
     fig.update_layout(
-        paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font_color="white", xaxis_tickangle=-25,
+        paper_bgcolor="#111827",
+        plot_bgcolor="#111827",
+        font_color="white",
+        xaxis_tickangle=-25,
         margin=dict(l=20, r=20, t=40, b=20)
     )
-    fig.update_traces(marker_color='#3B82F6', textposition='outside')
+    fig.update_traces(marker_color="#3B82F6", textposition="outside")
     return fig
 
 
 def grafico_linea_tiempo(df_historico, metrica_col, titulo):
-    orden_trimestres = {"i trimestre": 1, "ii trimestre": 2, "iii trimestre": 3, "iv trimestre": 4}
+    orden_trimestres = {
+        "i trimestre": 1,
+        "ii trimestre": 2,
+        "iii trimestre": 3,
+        "iv trimestre": 4
+    }
+
     df_plot = df_historico.copy()
     df_plot["orden"] = df_plot["Trimestre"].apply(normalizar_texto).map(orden_trimestres)
     df_plot = df_plot.dropna(subset=["orden"]).sort_values("orden")
     df_plot["Valor_Limpio"] = df_plot[metrica_col].apply(convertir_porcentaje)
-    
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df_plot["Trimestre"], 
+        x=df_plot["Trimestre"],
         y=df_plot["Valor_Limpio"],
-        mode='lines+markers+text',
+        mode="lines+markers+text",
         text=df_plot["Valor_Limpio"].apply(lambda v: f"{v:.1f}%"),
         textposition="top center",
         line=dict(color="#22C55E", width=4),
         marker=dict(size=10, color="#22C55E")
     ))
-    
+
     fig.update_layout(
         title=titulo,
-        paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font_color="white", margin=dict(l=30, r=30, t=50, b=30),
+        paper_bgcolor="#111827",
+        plot_bgcolor="#111827",
+        font_color="white",
+        margin=dict(l=30, r=30, t=50, b=30),
         yaxis=dict(range=[0, 110], gridcolor="#374151"),
         xaxis=dict(gridcolor="#374151")
     )
@@ -591,13 +575,13 @@ except Exception as e:
 
 
 # =====================================================
-# MENÚ LATERAL DE FILTROS Y CONTROLES (SIDEBAR)
+# MENÚ LATERAL DE FILTROS Y CONTROLES
 # =====================================================
 
 try:
     st.sidebar.image("logo_sigess.png", use_container_width=True)
 except Exception:
-    st.sidebar.caption("🖼️ [SIGESS 2026 — Logotipo Operativo]")
+    st.sidebar.caption("SIGESS 2026 - Logotipo Operativo")
 
 st.sidebar.title("SIGESS 2026")
 st.sidebar.caption("Centro de Monitoreo Estratégico")
@@ -620,9 +604,11 @@ regiones_disponibles = sorted(control["Delegación Regional"].dropna().unique())
 region = st.sidebar.selectbox("Delegación Regional", regiones_disponibles)
 
 delegaciones_vinculadas = sorted(
-    control[control["Delegación Regional"].apply(normalizar_texto) == normalizar_texto(region)]["Delegación Policial"]
-    .dropna().unique()
+    control[
+        control["Delegación Regional"].apply(normalizar_texto) == normalizar_texto(region)
+    ]["Delegación Policial"].dropna().unique()
 )
+
 delegacion = st.sidebar.selectbox("Delegación Policial", delegaciones_vinculadas)
 
 trimestre = st.sidebar.selectbox(
@@ -630,7 +616,14 @@ trimestre = st.sidebar.selectbox(
     ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"]
 )
 
-# Carga de filas específicas
+st.sidebar.markdown("---")
+st.sidebar.caption("Fuerza Pública de Costa Rica")
+
+
+# =====================================================
+# PROCESAMIENTO DE DATOS FILTRADOS
+# =====================================================
+
 mesas_f = filtrar(mesas, delegacion, trimestre)
 oe_f = filtrar(oe, delegacion, trimestre)
 pao_f = filtrar(pao, delegacion, trimestre)
@@ -639,44 +632,27 @@ row_mesas = mesas_f.iloc[0].to_dict() if not mesas_f.empty else {}
 row_oe = oe_f.iloc[0].to_dict() if not oe_f.empty else {}
 row_pao = pao_f.iloc[0].to_dict() if not pao_f.empty else {}
 
-# BOTÓN DE DESCARGA PDF INTEGRADO OPERACIONALMENTE
-st.sidebar.markdown("---")
-st.sidebar.subheader("Exportación Oficial")
-
-try:
-    pdf_bytes = generar_pdf_nativo(row_mesas, row_oe, row_pao, region, delegacion, trimestre)
-    st.sidebar.download_button(
-        label="Descargar Informe PDF",
-        data=bytes(pdf_bytes),
-        file_name=f"Informe_SIGESS_{delegacion.replace(' ', '_')}_{trimestre.replace(' ', '_')}.pdf",
-        mime="application/pdf",
-        use_container_width=True
-    )
-except Exception as pdf_err:
-    st.sidebar.error("Error al procesar el archivo de descarga.")
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Fuerza Pública de Costa Rica")
-
-
-# =====================================================
-# PROCESAMIENTO E INYECCIÓN DE DATOS FILTRADOS
-# =====================================================
-
 mesas_region = filtrar_region(mesas, region, trimestre)
 oe_region = filtrar_region(oe, region, trimestre)
 pao_region = filtrar_region(pao, region, trimestre)
 
-mesas_historico = mesas[mesas["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)]
-oe_historico = oe[oe["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)]
+mesas_historico = mesas[
+    mesas["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)
+] if "Delegación Policial" in mesas.columns else pd.DataFrame()
+
+oe_historico = oe[
+    oe["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(delegacion)
+] if "Delegación Policial" in oe.columns else pd.DataFrame()
 
 
 # =====================================================
-# ENCABEZADO DE PANTALLA (CON MARGEN ANTI-BLOQUEO)
+# ENCABEZADO DE PANTALLA
 # =====================================================
 
-# CORRECCIÓN: Espaciado directo mediante style inline para ganarle prioridad a la barra gris de la nube
-st.markdown('<div class="big-title" style="margin-top: 60px;">SIGESS 2026 — CONTROL DE MANDO</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="big-title" style="margin-top: 60px;">SIGESS 2026 — CONTROL DE MANDO</div>',
+    unsafe_allow_html=True
+)
 st.caption(f"Región: {region} | Unidad Cantonal: {delegacion} | Corte Seleccionado: {trimestre}")
 st.markdown("---")
 
@@ -689,19 +665,17 @@ if pagina == "Inicio Ejecutivo":
     st.header("Resumen General de Rendimiento")
 
     total_mesas = len(mesas_f) if not mesas_f.empty else 0
-    total_oe = len(oe_f) if not oe_f.empty else 0
+    total_oe = int(numero(row_oe.get("Total OE", 0))) if row_oe else 0
     total_pao = len(pao_f) if not pao_f.empty else 0
 
-    avance_pao = 0.0
-    if "AVANCE_PAO_%" in row_pao:
-        avance_pao = convertir_porcentaje(row_pao["AVANCE_PAO_%"])
+    avance_pao = convertir_porcentaje(row_pao.get("AVANCE_PAO_%", 0)) if row_pao else 0.0
+    cumplimiento_mal = convertir_porcentaje(row_mesas.get("% Cumplimiento Integral", 0)) if row_mesas else 0.0
 
-    cumplimiento_mal = 0.0
-    if "% Cumplimiento Integral" in row_mesas:
-        cumplimiento_mal = convertir_porcentaje(row_mesas["% Cumplimiento Integral"])
-
-    nota_anual_absoluta = mesas_historico["% Cumplimiento Integral"].apply(numero).sum() / 4.0
-    nota_anual_absoluta = convertir_porcentaje(nota_anual_absoluta)
+    if not mesas_historico.empty and "% Cumplimiento Integral" in mesas_historico.columns:
+        nota_anual_absoluta = mesas_historico["% Cumplimiento Integral"].apply(numero).sum() / 4.0
+        nota_anual_absoluta = convertir_porcentaje(nota_anual_absoluta)
+    else:
+        nota_anual_absoluta = 0.0
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Registros MAL", total_mesas)
@@ -712,30 +686,54 @@ if pagina == "Inicio Ejecutivo":
     st.markdown("---")
 
     col1, col2, col3 = st.columns(3)
+
     with col1:
         st.subheader("Cumplimiento M.A.L.")
         st.plotly_chart(grafico_gauge(cumplimiento_mal, "Nota Trimestral"), use_container_width=True)
+
     with col2:
         st.subheader("Progreso del PAO")
         st.plotly_chart(grafico_gauge(avance_pao, "Nota Trimestral"), use_container_width=True)
+
     with col3:
         st.subheader("Proyección Anual Absoluta")
         st.plotly_chart(grafico_gauge(nota_anual_absoluta, "Meta Cierre de Año"), use_container_width=True)
 
     st.markdown("---")
-    st.subheader("Evolución Cronológica del Año (Líneas de Tiempo)")
+    st.subheader("Evolución Cronológica del Año")
+
     col_t1, col_t2 = st.columns(2)
+
     with col_t1:
-        if not mesas_historico.empty:
-            st.plotly_chart(grafico_linea_tiempo(mesas_historico, "% Cumplimiento Integral", "Tendencia del % Cumplimiento Integral MAL"), use_container_width=True)
+        if not mesas_historico.empty and "% Cumplimiento Integral" in mesas_historico.columns:
+            st.plotly_chart(
+                grafico_linea_tiempo(
+                    mesas_historico,
+                    "% Cumplimiento Integral",
+                    "Tendencia del % Cumplimiento Integral MAL"
+                ),
+                use_container_width=True
+            )
+        else:
+            st.info("Sin histórico MAL para graficar.")
+
     with col_t2:
         if not oe_historico.empty:
-            col_pct = "% cumplimiento" if "% cumplimiento" in oe_historico.columns else "Total OE"
-            st.plotly_chart(grafico_linea_tiempo(oe_historico, col_pct, "Tendencia del Rendimiento Órdenes de Ejecución"), use_container_width=True)
+            col_pct = "% cumplimiento ajustado" if "% cumplimiento ajustado" in oe_historico.columns else "Total OE"
+            st.plotly_chart(
+                grafico_linea_tiempo(
+                    oe_historico,
+                    col_pct,
+                    "Tendencia del Cumplimiento Parcial Transitorio OE"
+                ),
+                use_container_width=True
+            )
+        else:
+            st.info("Sin histórico OE para graficar.")
 
 
 # =====================================================
-# MÓDULO 2: PLAN ANUAL OPERATIVO (PAO)
+# MÓDULO 2: PLAN ANUAL OPERATIVO
 # =====================================================
 
 elif pagina == "PAO Estratégico":
@@ -756,12 +754,16 @@ elif pagina == "PAO Estratégico":
         c4.metric("Estado", estado_pao)
 
         st.markdown("---")
+
         col1, col2 = st.columns(2)
+
         with col1:
             st.subheader("Semáforo de Control PAO")
             st.plotly_chart(grafico_gauge(avance, "Progreso PAO"), use_container_width=True)
+
         with col2:
             st.subheader("Cumplimiento por Puntos Clave")
+
             componentes = {
                 "Validación DR": row_pao.get("INSTR_DR_5", 0),
                 "Validación Delegación": row_pao.get("INSTR_DELEG_5", 0),
@@ -771,12 +773,20 @@ elif pagina == "PAO Estratégico":
                 "Líneas": row_pao.get("LINEAS_25", 0),
                 "Informe": row_pao.get("INFORME_25", 0),
             }
-            df_comp = pd.DataFrame({"Componente": list(componentes.keys()), "Puntaje": [numero(v) for v in componentes.values()]})
-            st.plotly_chart(grafico_barras(df_comp, "Componente", "Puntaje"), use_container_width=True)
+
+            df_comp = pd.DataFrame({
+                "Componente": list(componentes.keys()),
+                "Puntaje": [numero(v) for v in componentes.values()]
+            })
+
+            st.plotly_chart(
+                grafico_barras(df_comp, "Componente", "Puntaje"),
+                use_container_width=True
+            )
 
 
 # =====================================================
-# MÓDULO 3: ÓRDENES DE EJECUCIÓN (O.E. + AUDITORÍA)
+# MÓDULO 3: ÓRDENES DE EJECUCIÓN
 # =====================================================
 
 elif pagina == "Órdenes de Ejecución":
@@ -795,8 +805,11 @@ elif pagina == "Órdenes de Ejecución":
         oportunidad = numero(row_oe.get("OE en oportunidad de mejora", 0))
         ajustadas = numero(row_oe.get("OE ajustadas por contexto trimestral", 0))
 
-        cumplimiento = convertir_porcentaje(row_oe.get("% cumplimiento", 0))
-        cumplimiento_ajustado = convertir_porcentaje(row_oe.get("% cumplimiento ajustado", 0))
+        # IMPORTANTE:
+        # Por transitorio, NO se usa "% cumplimiento" de OE.
+        # Se usa "% cumplimiento ajustado" como cumplimiento parcial transitorio.
+        cumplimiento = convertir_porcentaje(row_oe.get("% cumplimiento ajustado", 0))
+        cumplimiento_ajustado = cumplimiento
 
         estado = row_oe.get("Estado", "Sin estado")
         validador_oe = row_oe.get("Validador de la OE", "No especificado / Pendiente")
@@ -837,15 +850,12 @@ elif pagina == "Órdenes de Ejecución":
             "Sin informe operativo."
         )
 
-        # =========================
-        # BLOQUE SUPERIOR
-        # =========================
-
+        # Bloque superior
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total OE", int(total_oe))
         c2.metric("Acciones Ejecutadas", int(acciones))
         c3.metric("OE con Articulación", int(articulacion))
-        c4.metric("Cumplimiento", f"{cumplimiento:.1f}%")
+        c4.metric("Cumplimiento Parcial Transitorio", f"{cumplimiento:.1f}%")
 
         c5, c6, c7, c8 = st.columns(4)
         c5.metric("OE Válidas", int(oe_validas))
@@ -855,16 +865,13 @@ elif pagina == "Órdenes de Ejecución":
 
         st.markdown("---")
 
-        # =========================
-        # SEMÁFORO Y GRÁFICO
-        # =========================
-
+        # Semáforo y gráfico
         col1, col2 = st.columns([1, 2])
 
         with col1:
             st.subheader("Semáforo Técnico")
             st.plotly_chart(
-                grafico_gauge(cumplimiento, "Cumplimiento OE"),
+                grafico_gauge(cumplimiento, "Cumplimiento Parcial Transitorio"),
                 use_container_width=True
             )
 
@@ -897,33 +904,27 @@ elif pagina == "Órdenes de Ejecución":
 
         st.markdown("---")
 
-        # =========================
-        # DICTAMEN OPERATIVO
-        # =========================
-
+        # Dictamen operativo
         st.subheader("Dictamen Técnico Operativo")
 
         st.markdown(f"""
         <div class="card info-card">
             <h4>Estado General de la Gestión</h4>
-            <p><b>Estado:</b> {estado}</p>
-            <p><b>Validación Final:</b> {validacion_final}</p>
-            <p><b>Funcionario Técnico Evaluador:</b> {validador_oe}</p>
-            <p><b>Cumplimiento Ajustado:</b> {cumplimiento_ajustado:.1f}%</p>
+            <p><b>Estado:</b> {texto_seguro_html(estado)}</p>
+            <p><b>Validación Final:</b> {texto_seguro_html(validacion_final)}</p>
+            <p><b>Funcionario Técnico Evaluador:</b> {texto_seguro_html(validador_oe)}</p>
+            <p><b>Cumplimiento Parcial Transitorio:</b> {cumplimiento_ajustado:.1f}%</p>
         </div>
         """, unsafe_allow_html=True)
 
         st.markdown(f"""
         <div class="card success-card">
             <h4>Justificación Operativa Automatizada</h4>
-            <p>{informe}</p>
+            <p>{texto_seguro_html(informe)}</p>
         </div>
         """, unsafe_allow_html=True)
 
-        # =========================
-        # TRAZABILIDAD
-        # =========================
-
+        # Trazabilidad
         st.subheader("Trazabilidad, Corresponsabilidad y Enfoque")
 
         col_a, col_b = st.columns(2)
@@ -932,14 +933,14 @@ elif pagina == "Órdenes de Ejecución":
             st.markdown(f"""
             <div class="card info-card">
                 <h4>Instituciones Participantes</h4>
-                <p>{instituciones}</p>
+                <p>{texto_seguro_html(instituciones)}</p>
             </div>
             """, unsafe_allow_html=True)
 
             st.markdown(f"""
             <div class="card warning-card">
                 <h4>Problemáticas y Factores de Riesgo</h4>
-                <p>{problematicas}</p>
+                <p>{texto_seguro_html(problematicas)}</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -947,23 +948,20 @@ elif pagina == "Órdenes de Ejecución":
             st.markdown(f"""
             <div class="card info-card">
                 <h4>Enfoque de la Orden de Ejecución</h4>
-                <p>{enfoque}</p>
+                <p>{texto_seguro_html(enfoque)}</p>
             </div>
             """, unsafe_allow_html=True)
 
             st.markdown(f"""
             <div class="card success-card">
                 <h4>Acciones y Resultados</h4>
-                <p>{acciones_resultados}</p>
+                <p>{texto_seguro_html(acciones_resultados)}</p>
             </div>
             """, unsafe_allow_html=True)
 
         st.markdown("---")
 
-        # =========================
-        # EVIDENCIA Y CRITERIO
-        # =========================
-
+        # Evidencia y criterio
         st.subheader("Evidencia y Criterio Técnico")
 
         col_e, col_c = st.columns(2)
@@ -972,7 +970,7 @@ elif pagina == "Órdenes de Ejecución":
             st.markdown(f"""
             <div class="card warning-card">
                 <h4>Observaciones de Evidencia</h4>
-                <p>{evidencia}</p>
+                <p>{texto_seguro_html(evidencia)}</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -980,54 +978,31 @@ elif pagina == "Órdenes de Ejecución":
             st.markdown(f"""
             <div class="card danger-card">
                 <h4>Criterio Técnico</h4>
-                <p>{criterio}</p>
+                <p>{texto_seguro_html(criterio)}</p>
             </div>
             """, unsafe_allow_html=True)
 
         st.markdown("---")
 
-        # =========================
-        # ALERTAS AUTOMÁTICAS
-        # =========================
-
+        # Alertas automáticas
         st.subheader("Alertas Operativas Automáticas")
 
-        texto_alerta = f"{criterio} {evidencia} {validacion_final}".lower()
+        alertas = generar_alertas_oe(row_oe)
 
-        alertas = []
-
-        if "no se planifica" in texto_alerta or sin_mal > 0:
-            alertas.append("Riesgo de planificación: existen OE sin planificación en Mesa de Articulación Local.")
-
-        if "no hay coherencia" in texto_alerta:
-            alertas.append("Riesgo de coherencia: se identifican diferencias entre planificación y ejecución.")
-
-        if "no se observa evidencia" in texto_alerta or "sin evidencia" in texto_alerta:
-            alertas.append("Riesgo documental: se identifican debilidades en la evidencia aportada.")
-
-        if "no corresponden" in texto_alerta:
-            alertas.append("Riesgo técnico: las acciones no corresponden plenamente a la problemática definida.")
-
-        if oe_no_validas > 0:
-            alertas.append("Riesgo de validez: existen Órdenes de Ejecución clasificadas como no válidas.")
-
-        if not alertas:
-            st.success("No se identifican alertas críticas automáticas en el registro evaluado.")
+        if len(alertas) == 1 and alertas[0].startswith("No se identifican"):
+            st.success(alertas[0])
         else:
             for alerta in alertas:
                 st.markdown(f"""
                 <div class="card danger-card">
                     <h4>Alerta</h4>
-                    <p>{alerta}</p>
+                    <p>{texto_seguro_html(alerta)}</p>
                 </div>
                 """, unsafe_allow_html=True)
 
         st.markdown("---")
 
-        # =========================
-        # GENERACIÓN DE INFORME
-        # =========================
-
+        # Generación de informe
         st.subheader("Generación de Informe Oficial")
 
         if st.button("Crear informe de Órdenes de Ejecución", use_container_width=True):
@@ -1053,7 +1028,7 @@ elif pagina == "Órdenes de Ejecución":
 
 
 # =====================================================
-# MÓDULO 4: MESAS DE ARTICULACIÓN (M.A.L. + AUDITORÍA)
+# MÓDULO 4: MESAS DE ARTICULACIÓN
 # =====================================================
 
 elif pagina == "Mesas de Articulación":
@@ -1076,16 +1051,23 @@ elif pagina == "Mesas de Articulación":
         c4.metric("Condición de Entrega", estado_gestion)
 
         st.markdown("---")
+
         st.markdown(f"""
         <div class="card info-card">
             <h4>Estatus de Integridad de la Mesa</h4>
-            <p><b>Auditor de Control de Gestión SIGESS:</b> {validador_mesa}</p>
-            <p><b>Fase Territorial Registrada:</b> {fase}</p>
+            <p><b>Auditor de Control de Gestión SIGESS:</b> {texto_seguro_html(validador_mesa)}</p>
+            <p><b>Fase Territorial Registrada:</b> {texto_seguro_html(fase)}</p>
         </div>
         """, unsafe_allow_html=True)
 
         justificacion = row_mesas.get("Justificación Técnica Operativa", "Sin registro pericial.")
-        st.markdown(f'<div class="card success-card"><h3>Justificación Técnica Operativa</h3><p>{justificacion}</p></div>', unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class="card success-card">
+            <h3>Justificación Técnica Operativa</h3>
+            <p>{texto_seguro_html(justificacion)}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # =====================================================
@@ -1093,14 +1075,24 @@ elif pagina == "Mesas de Articulación":
 # =====================================================
 
 elif pagina == "Comparativa de Trimestres":
-    st.header("Módulo de Comparación Multi-Periodo (Benchmarking Side-by-Side)")
+    st.header("Módulo de Comparación Multi-Periodo")
     st.markdown("---")
 
     col_sel1, col_sel2 = st.columns(2)
+
     with col_sel1:
-        t_izq = st.selectbox("Seleccione Periodo Base (Izquierda)", ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"], index=0)
+        t_izq = st.selectbox(
+            "Seleccione Periodo Base (Izquierda)",
+            ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"],
+            index=0
+        )
+
     with col_sel2:
-        t_der = st.selectbox("Seleccione Periodo Comparativo (Derecha)", ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"], index=1)
+        t_der = st.selectbox(
+            "Seleccione Periodo Comparativo (Derecha)",
+            ["I Trimestre", "II Trimestre", "III Trimestre", "IV Trimestre"],
+            index=1
+        )
 
     df_izq = filtrar(mesas, delegacion, t_izq)
     df_der = filtrar(mesas, delegacion, t_der)
@@ -1112,25 +1104,48 @@ elif pagina == "Comparativa de Trimestres":
         nota_der = convertir_porcentaje(df_der["% Cumplimiento Integral"].iloc[0]) if not df_der.empty else 0.0
 
         c_i, c_d = st.columns(2)
+
         with c_i:
             st.plotly_chart(grafico_gauge(nota_izq, f"Nota en {t_izq}"), use_container_width=True)
+
             if not df_izq.empty:
-                st.markdown(f"""<div class="card info-card"><h5>Detalle Técnico {t_izq}</h5>
-                <p><b>Estado de Gestión:</b> {df_izq['Estado de Gestión'].iloc[0]}<br>
-                <b>Gobernanza:</b> {df_izq['Índice Gobernanza Local'].iloc[0]}</p></div>""", unsafe_allow_html=True)
+                estado_i = df_izq["Estado de Gestión"].iloc[0] if "Estado de Gestión" in df_izq.columns else "Sin estado"
+                gob_i = df_izq["Índice Gobernanza Local"].iloc[0] if "Índice Gobernanza Local" in df_izq.columns else "Sin dato"
+
+                st.markdown(f"""
+                <div class="card info-card">
+                    <h5>Detalle Técnico {texto_seguro_html(t_izq)}</h5>
+                    <p><b>Estado de Gestión:</b> {texto_seguro_html(estado_i)}<br>
+                    <b>Gobernanza:</b> {texto_seguro_html(gob_i)}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
         with c_d:
             st.plotly_chart(grafico_gauge(nota_der, f"Nota en {t_der}"), use_container_width=True)
+
             if not df_der.empty:
-                st.markdown(f"""<div class="card success-card"><h5>Detalle Técnico {t_der}</h5>
-                <p><b>Estado de Gestión:</b> {df_der['Estado de Gestión'].iloc[0]}<br>
-                <b>Gobernanza:</b> {df_der['Índice Gobernanza Local'].iloc[0]}</p></div>""", unsafe_allow_html=True)
+                estado_d = df_der["Estado de Gestión"].iloc[0] if "Estado de Gestión" in df_der.columns else "Sin estado"
+                gob_d = df_der["Índice Gobernanza Local"].iloc[0] if "Índice Gobernanza Local" in df_der.columns else "Sin dato"
+
+                st.markdown(f"""
+                <div class="card success-card">
+                    <h5>Detalle Técnico {texto_seguro_html(t_der)}</h5>
+                    <p><b>Estado de Gestión:</b> {texto_seguro_html(estado_d)}<br>
+                    <b>Gobernanza:</b> {texto_seguro_html(gob_d)}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
         st.markdown("---")
+
         df_delta = pd.DataFrame({
             "Periodo Evaluado": [t_izq, t_der],
             "Porcentaje de Cumplimiento %": [nota_izq, nota_der]
         })
-        st.plotly_chart(grafico_barras(df_delta, "Periodo Evaluado", "Porcentaje de Cumplimiento %"), use_container_width=True)
+
+        st.plotly_chart(
+            grafico_barras(df_delta, "Periodo Evaluado", "Porcentaje de Cumplimiento %"),
+            use_container_width=True
+        )
 
 
 # =====================================================
@@ -1146,22 +1161,62 @@ elif pagina == "Consolidado Regional":
     c3.metric("Fichas PAO Región", len(pao_region))
 
     st.markdown("---")
+
     mask_cantones = control["Delegación Regional"].apply(normalizar_texto) == normalizar_texto(region)
     cantones_region = sorted(control[mask_cantones]["Delegación Policial"].dropna().unique())
 
     datos_resumen = []
+
     for c in cantones_region:
-        df_pao_c = pao_region[pao_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)]
-        avance_pao_reg = convertir_porcentaje(df_pao_c["AVANCE_PAO_%"].iloc[0]) if not df_pao_c.empty else 0.0
+        df_pao_c = pao_region[
+            pao_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)
+        ] if not pao_region.empty else pd.DataFrame()
+
+        df_oe_c = oe_region[
+            oe_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)
+        ] if not oe_region.empty else pd.DataFrame()
+
+        df_mesas_c = mesas_region[
+            mesas_region["Delegación Policial"].apply(normalizar_texto) == normalizar_texto(c)
+        ] if not mesas_region.empty else pd.DataFrame()
+
+        avance_pao_reg = convertir_porcentaje(df_pao_c["AVANCE_PAO_%"].iloc[0]) if not df_pao_c.empty and "AVANCE_PAO_%" in df_pao_c.columns else 0.0
+        cumplimiento_mal_reg = convertir_porcentaje(df_mesas_c["% Cumplimiento Integral"].iloc[0]) if not df_mesas_c.empty and "% Cumplimiento Integral" in df_mesas_c.columns else 0.0
+        cumplimiento_oe_reg = convertir_porcentaje(df_oe_c["% cumplimiento ajustado"].iloc[0]) if not df_oe_c.empty and "% cumplimiento ajustado" in df_oe_c.columns else 0.0
+        total_oe_reg = numero(df_oe_c["Total OE"].iloc[0]) if not df_oe_c.empty and "Total OE" in df_oe_c.columns else 0.0
 
         datos_resumen.append({
             "Delegación Policial": c,
-            "Eficiencia PAO %": avance_pao_reg
+            "Eficiencia PAO %": avance_pao_reg,
+            "Cumplimiento MAL %": cumplimiento_mal_reg,
+            "Cumplimiento OE Transitorio %": cumplimiento_oe_reg,
+            "Total OE": total_oe_reg
         })
 
     df_resumen = pd.DataFrame(datos_resumen)
+
+    st.subheader("Resumen Regional por Delegación")
+    st.dataframe(df_resumen, use_container_width=True)
+
     st.subheader("Eficiencia del PAO por Comandancia")
-    fig1 = px.bar(df_resumen, x="Delegación Policial", y="Eficiencia PAO %", text="Eficiencia PAO %")
-    fig1.update_layout(paper_bgcolor="#111827", plot_bgcolor="#111827", font_color="white", xaxis_tickangle=-45)
-    fig1.update_traces(marker_color='#10B981', texttemplate='%{text:.1f}%', textposition='outside')
-    st.plotly_chart(fig1, use_container_width=True)
+    st.plotly_chart(
+        grafico_barras(df_resumen, "Delegación Policial", "Eficiencia PAO %", "Eficiencia PAO %"),
+        use_container_width=True
+    )
+
+    st.subheader("Cumplimiento Parcial Transitorio OE por Delegación")
+    st.plotly_chart(
+        grafico_barras(
+            df_resumen,
+            "Delegación Policial",
+            "Cumplimiento OE Transitorio %",
+            "Cumplimiento Parcial Transitorio OE"
+        ),
+        use_container_width=True
+    )
+
+    st.subheader("Cumplimiento MAL por Delegación")
+    st.plotly_chart(
+        grafico_barras(df_resumen, "Delegación Policial", "Cumplimiento MAL %", "Cumplimiento MAL %"),
+        use_container_width=True
+    )
