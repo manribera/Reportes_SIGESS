@@ -188,6 +188,9 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     val_pao = convertir_porcentaje(r_pao.get("AVANCE_PAO_%", 0)) if r_pao else 0.0
     val_mal = convertir_porcentaje(r_mesas.get("% Cumplimiento Integral", 0)) if r_mesas else 0.0
     val_oe = int(numero(r_oe.get("Total OE", 0))) if r_oe else 0
+    val_cumplimiento_oe = convertir_porcentaje(
+    r_oe.get("% cumplimiento ajustado", 0)
+) if r_oe else 0.0
 
     # Metadatos
     pdf.set_font("Helvetica", "B", 10)
@@ -245,24 +248,259 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     pdf.multi_cell(0, 5, sanitizar_para_pdf(just_mal), 1)
     pdf.ln(5)
 
-    # Bloque 3: OE
-    pdf.set_fill_color(243, 244, 246)
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 7, " 3. FISCALIZACIÓN OPERATIVA DE ÓRDENES DE EJECUCIÓN", 0, 1, "L", True)
-    pdf.ln(2)
+   # =====================================================
+# BLOQUE 3 — ÓRDENES DE EJECUCIÓN
+# =====================================================
 
-    pdf.set_font("Helvetica", "B", 9.5)
-    pdf.cell(0, 5, "Justificación Operativa Automatizada:", 0, 1)
-    pdf.set_font("Helvetica", "", 9.5)
-    informe_oe = r_oe.get("Informe automático (justificación técnica operativa)", "Sin informe operativo.") if r_oe else "Sin datos."
-    pdf.multi_cell(0, 5, sanitizar_para_pdf(informe_oe), 1)
-    pdf.ln(3)
+pdf.set_fill_color(243, 244, 246)
+pdf.set_font("Helvetica", "B", 11)
+pdf.set_text_color(31, 41, 55)
 
-    pdf.set_font("Helvetica", "B", 9.5)
-    pdf.cell(0, 5, "Acciones de Campo Colectivas y Resultados Sembrados:", 0, 1)
-    pdf.set_font("Helvetica", "", 9.5)
-    sintesis_oe = r_oe.get("Acciones y Resultados (síntesis de acciones) ", r_oe.get("Acciones y Resultados (síntesis de acciones)", "Sin acciones registradas.")) if r_oe else "Sin datos."
-    pdf.multi_cell(0, 5, sanitizar_para_pdf(sintesis_oe), 1)
+pdf.cell(
+    0,
+    7,
+    " 3. CENTRO DE FISCALIZACIÓN DE ÓRDENES DE EJECUCIÓN",
+    0,
+    1,
+    "L",
+    True
+)
+
+pdf.ln(3)
+
+# =====================================================
+# RESUMEN CUANTITATIVO
+# =====================================================
+
+total_oe = int(numero(r_oe.get("Total OE", 0))) if r_oe else 0
+acciones = int(numero(r_oe.get("Total acciones ejecutadas", 0))) if r_oe else 0
+articulacion = int(numero(r_oe.get("OE con articulación", 0))) if r_oe else 0
+parciales = int(numero(r_oe.get("OE con cumplimiento parcial", 0))) if r_oe else 0
+no_validas = int(numero(r_oe.get("OE no válidas", 0))) if r_oe else 0
+sin_mal = int(numero(r_oe.get("OE sin planificación en MAL", 0))) if r_oe else 0
+
+cumplimiento_transitorio = convertir_porcentaje(
+    r_oe.get("% cumplimiento ajustado", 0)
+) if r_oe else 0.0
+
+estado = r_oe.get("Estado", "Sin estado") if r_oe else "Sin datos"
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.set_fill_color(15, 23, 42)
+pdf.set_text_color(255, 255, 255)
+
+pdf.cell(60, 7, "Indicador", 1, 0, "C", True)
+pdf.cell(40, 7, "Resultado", 1, 0, "C", True)
+pdf.cell(90, 7, "Observación", 1, 1, "C", True)
+
+pdf.set_text_color(31, 41, 55)
+pdf.set_font("Helvetica", "", 9)
+
+datos_oe = [
+    ["Total OE", str(total_oe), "Órdenes de Ejecución registradas."],
+    ["Acciones Ejecutadas", str(acciones), "Acciones operativas desarrolladas."],
+    ["OE con Articulación", str(articulacion), "Corresponsabilidad interinstitucional registrada."],
+    ["OE Parciales", str(parciales), "Cumplimiento parcial bajo criterio transitorio."],
+    ["OE No Válidas", str(no_validas), "No alcanzan validez técnica."],
+    ["OE sin M.A.L.", str(sin_mal), "Sin planificación en Mesa de Articulación Local."],
+    [
+        "Cumplimiento Parcial Transitorio",
+        f"{cumplimiento_transitorio:.1f}%",
+        "Aplicación transitoria I Trimestre ORDOP-0022-2026."
+    ]
+]
+
+for fila in datos_oe:
+    pdf.cell(60, 7, sanitizar_para_pdf(fila[0]), 1)
+    pdf.cell(40, 7, sanitizar_para_pdf(fila[1]), 1, 0, "C")
+    pdf.cell(90, 7, sanitizar_para_pdf(fila[2]), 1, 1)
+
+pdf.ln(5)
+
+# =====================================================
+# DICTAMEN OPERATIVO
+# =====================================================
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.cell(0, 6, "DICTAMEN OPERATIVO Y VALIDACIÓN TÉCNICA", 0, 1)
+
+pdf.set_font("Helvetica", "", 9.5)
+
+informe_oe = r_oe.get(
+    "Informe automático (justificación técnica operativa)",
+    "Sin informe operativo."
+) if r_oe else "Sin datos."
+
+pdf.multi_cell(
+    0,
+    5,
+    sanitizar_para_pdf(informe_oe),
+    1
+)
+
+pdf.ln(4)
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.cell(0, 6, "VALIDACIÓN GENERAL", 0, 1)
+
+pdf.set_font("Helvetica", "", 9.5)
+
+validacion_final = r_oe.get(
+    "Validación Final",
+    r_oe.get("Validación Final ", "Pendiente")
+) if r_oe else "Sin datos."
+
+pdf.multi_cell(
+    0,
+    5,
+    sanitizar_para_pdf(validacion_final),
+    1
+)
+
+pdf.ln(4)
+
+# =====================================================
+# FACTORES CUALITATIVOS
+# =====================================================
+
+instituciones = r_oe.get(
+    "Instituciones Participantes (Corresponsabilidad (articulación)",
+    "Sin instituciones registradas."
+) if r_oe else "Sin datos."
+
+problematicas = r_oe.get(
+    "Problemáticas y Factores",
+    "Sin problemáticas registradas."
+) if r_oe else "Sin datos."
+
+enfoque = r_oe.get(
+    "Enfoque de la OE",
+    "Sin enfoque registrado."
+) if r_oe else "Sin datos."
+
+acciones_resultados = r_oe.get(
+    "Acciones y Resultados (síntesis de acciones) ",
+    r_oe.get(
+        "Acciones y Resultados (síntesis de acciones)",
+        "Sin acciones registradas."
+    )
+) if r_oe else "Sin datos."
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.cell(0, 6, "CORRESPONSABILIDAD Y ARTICULACIÓN", 0, 1)
+
+pdf.set_font("Helvetica", "", 9)
+pdf.multi_cell(0, 5, sanitizar_para_pdf(instituciones), 1)
+
+pdf.ln(3)
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.cell(0, 6, "FACTORES DE RIESGO Y PROBLEMÁTICAS", 0, 1)
+
+pdf.set_font("Helvetica", "", 9)
+pdf.multi_cell(0, 5, sanitizar_para_pdf(problematicas), 1)
+
+pdf.ln(3)
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.cell(0, 6, "ENFOQUE APLICADO", 0, 1)
+
+pdf.set_font("Helvetica", "", 9)
+pdf.multi_cell(0, 5, sanitizar_para_pdf(enfoque), 1)
+
+pdf.ln(3)
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.cell(0, 6, "ACCIONES Y RESULTADOS OPERATIVOS", 0, 1)
+
+pdf.set_font("Helvetica", "", 9)
+pdf.multi_cell(0, 5, sanitizar_para_pdf(acciones_resultados), 1)
+
+pdf.ln(4)
+
+# =====================================================
+# EVIDENCIA Y CRITERIO
+# =====================================================
+
+evidencia = r_oe.get(
+    "Observaciones de Evidencia",
+    "Sin observaciones registradas."
+) if r_oe else "Sin datos."
+
+criterio = r_oe.get(
+    "Criterio Técnico (sustento técnico)",
+    "Sin criterio técnico."
+) if r_oe else "Sin datos."
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.cell(0, 6, "OBSERVACIONES DE EVIDENCIA", 0, 1)
+
+pdf.set_font("Helvetica", "", 9)
+pdf.multi_cell(0, 5, sanitizar_para_pdf(evidencia), 1)
+
+pdf.ln(3)
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.cell(0, 6, "CRITERIO TÉCNICO OPERATIVO", 0, 1)
+
+pdf.set_font("Helvetica", "", 9)
+pdf.multi_cell(0, 5, sanitizar_para_pdf(criterio), 1)
+
+pdf.ln(4)
+
+# =====================================================
+# ALERTAS AUTOMÁTICAS
+# =====================================================
+
+pdf.set_font("Helvetica", "B", 10)
+pdf.cell(0, 6, "ALERTAS OPERATIVAS AUTOMÁTICAS", 0, 1)
+
+texto_alerta = f"{criterio} {evidencia} {validacion_final}".lower()
+
+alertas = []
+
+if "no se planifica" in texto_alerta or sin_mal > 0:
+    alertas.append(
+        "Riesgo de planificación: existen OE sin planificación en Mesa de Articulación Local."
+    )
+
+if "no hay coherencia" in texto_alerta:
+    alertas.append(
+        "Riesgo de coherencia entre planificación y ejecución."
+    )
+
+if "no se observa evidencia" in texto_alerta:
+    alertas.append(
+        "Debilidad documental: evidencia insuficiente."
+    )
+
+if "no corresponden" in texto_alerta:
+    alertas.append(
+        "Las acciones ejecutadas no corresponden plenamente a la problemática priorizada."
+    )
+
+if no_validas > 0:
+    alertas.append(
+        "Existen Órdenes de Ejecución clasificadas como no válidas."
+    )
+
+pdf.set_font("Helvetica", "", 9)
+
+if not alertas:
+    pdf.multi_cell(
+        0,
+        5,
+        "No se identifican alertas críticas automáticas.",
+        1
+    )
+else:
+    for alerta in alertas:
+        pdf.multi_cell(
+            0,
+            5,
+            sanitizar_para_pdf(f"- {alerta}"),
+            1
+        )
     
     pdf.ln(10)
     pdf.set_font("Helvetica", "I", 8.5)
