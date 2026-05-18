@@ -697,6 +697,7 @@ if pagina == "Inicio Ejecutivo":
     c3.metric("Fichas PAO", total_pao)
     c4.metric("Eficiencia PAO %", f"{avance_pao:.1f}%")
     observaciones_pao = row_pao.get(
+        
     "OBSERVACIONES",
     row_pao.get("Observaciones", "Sin observaciones registradas.")
 )
