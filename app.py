@@ -372,7 +372,7 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     agregar_caja_texto(pdf, "Dictamen de trazabilidad, madurez y gobernanza:", just_mal)
 
     # Órdenes de Ejecución
-    agregar_titulo_seccion(pdf, "3. CENTRO DE FISCALIZACIÓN DE ÓRDENES DE EJECUCIÓN")
+    agregar_titulo_seccion(pdf, "3. CENTRO DE VALIDACIÓN DE ÓRDENES DE EJECUCIÓN")
 
     total_oe = int(numero(obtener_valor(r_oe, "Total OE", 0))) if r_oe else 0
     acciones = int(numero(obtener_valor(r_oe, "Total acciones ejecutadas", 0))) if r_oe else 0
@@ -1230,7 +1230,7 @@ elif pagina == "Consolidado Regional":
     st.subheader("Resumen Regional por Delegación")
     st.dataframe(df_resumen, use_container_width=True)
 
-    st.subheader("Eficiencia del PAO por Comandancia")
+    st.subheader("Eficiencia del PAO por Delegación")
     st.plotly_chart(
         grafico_barras(df_resumen, "Delegación Policial", "Eficiencia PAO %", "Eficiencia PAO %"),
         use_container_width=True
