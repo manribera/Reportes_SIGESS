@@ -88,7 +88,7 @@ div[data-testid="stMetricLabel"] {
 # FUNCIONES DE LIMPIEZA, NORMALIZACIÓN Y FILTRADO
 # =====================================================
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=300)
 def cargar_hoja(sheet_url, nombre_hoja):
     creds_dict = st.secrets["gcp_service_account"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
@@ -372,7 +372,7 @@ def generar_pdf_nativo(r_mesas, r_oe, r_pao, region, delegacion, trimestre):
     agregar_caja_texto(pdf, "Dictamen de trazabilidad, madurez y gobernanza:", just_mal)
 
     # Órdenes de Ejecución
-    agregar_titulo_seccion(pdf, "3. CENTRO DE VALIDACIÓN DE ÓRDENES DE EJECUCIÓN")
+    agregar_titulo_seccion(pdf, "3. CENTRO DE FISCALIZACIÓN DE ÓRDENES DE EJECUCIÓN")
 
     total_oe = int(numero(obtener_valor(r_oe, "Total OE", 0))) if r_oe else 0
     acciones = int(numero(obtener_valor(r_oe, "Total acciones ejecutadas", 0))) if r_oe else 0
@@ -628,10 +628,7 @@ trimestre = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Estrategia Sembremos Seguridad")
-if st.sidebar.button("Actualizar datos", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
+st.sidebar.caption("Fuerza Pública de Costa Rica")
 
 
 # =====================================================
@@ -696,23 +693,7 @@ if pagina == "Inicio Ejecutivo":
     c2.metric("Volumen O.E.", total_oe)
     c3.metric("Fichas PAO", total_pao)
     c4.metric("Eficiencia PAO %", f"{avance_pao:.1f}%")
-         observaciones_pao = row_pao.get(
-            "OBSERVACIONES",
-            row_pao.get("Observaciones", "Sin observaciones registradas.")
-        )
 
-        st.markdown("---")
-
-        st.subheader("Observaciones PAO")
-
-        st.markdown(f"""
-        <div class="card warning-card">
-            <h4>Observaciones</h4>
-            <p>{texto_seguro_html(observaciones_pao)}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-   
     st.markdown("---")
 
     col1, col2, col3 = st.columns(3)
@@ -783,6 +764,22 @@ elif pagina == "PAO Estratégico":
         c3.metric("Despliegue", f"{despliegue:.1f} / 10")
         c4.metric("Estado", estado_pao)
 
+        observaciones_pao = row_pao.get(
+            "OBSERVACIONES",
+            row_pao.get("Observaciones", "Sin observaciones registradas.")
+        )
+
+        st.markdown("---")
+
+        st.subheader("Observaciones PAO")
+
+        st.markdown(f"""
+        <div class="card warning-card">
+            <h4>Observaciones</h4>
+            <p>{texto_seguro_html(observaciones_pao)}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
         st.markdown("---")
 
         col1, col2 = st.columns(2)
@@ -820,7 +817,7 @@ elif pagina == "PAO Estratégico":
 # =====================================================
 
 elif pagina == "Órdenes de Ejecución":
-    st.header("Centro de Fiscalización de Órdenes de Ejecución")
+    st.header("Centro de Validación de Órdenes de Ejecución")
 
     if not row_oe:
         st.info("Sin registros cargados de O.E. para esta unidad policial.")
