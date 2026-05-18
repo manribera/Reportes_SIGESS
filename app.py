@@ -696,6 +696,21 @@ if pagina == "Inicio Ejecutivo":
     c2.metric("Volumen O.E.", total_oe)
     c3.metric("Fichas PAO", total_pao)
     c4.metric("Eficiencia PAO %", f"{avance_pao:.1f}%")
+    observaciones_pao = row_pao.get(
+    "OBSERVACIONES",
+    row_pao.get("Observaciones", "Sin observaciones registradas.")
+)
+
+st.markdown("---")
+
+st.subheader("Observaciones PAO")
+
+st.markdown(f"""
+<div class="card warning-card">
+    <h4>Observaciones</h4>
+    <p>{texto_seguro_html(observaciones_pao)}</p>
+</div>
+""", unsafe_allow_html=True)
 
     st.markdown("---")
 
